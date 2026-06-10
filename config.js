@@ -10,8 +10,8 @@ const CONFIG = {
       id: 'kaon-group',
       name: 'KAON GROUP',
       url: 'https://www.kaongroup.com/en/',
-      // Both languages share one property; language split done via URL path filter
-      propertyId: '348541450',
+      // Each language is a separate GA4 property
+      propertyId: null,
       color: '#E87722',
       tableColor: '#E87722',
       altRowColor: '#FFF8F3',
@@ -19,9 +19,9 @@ const CONFIG = {
       showCountries: false,
       filterField: 'pagePathPlusQueryString',
       languages: [
-        { code: 'all', label: '전체', filterValue: null },
-        { code: 'en', label: 'English', filterValue: '/en' },
-        { code: 'ko', label: 'Korea',   filterValue: '/ko' },
+        { code: 'all', label: '전체' },
+        { code: 'en', label: 'English', propertyId: '348541450' },
+        { code: 'ko', label: 'Korea',   propertyId: '348498498' },
       ],
     },
     {
