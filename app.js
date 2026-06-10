@@ -1015,6 +1015,27 @@ async function loadOneSite(site) {
 
 // ── Auth ──────────────────────────────────────────
 
+const TOKEN_STORAGE_KEY = 'kaon_ga_token';
+const TOKEN_EXPIRY_KEY  = 'kaon_ga_token_expiry';
+
+function saveToken(token, expiresIn) {
+  // expires_in은 초 단위; 5분 버퍼를 빼서 만료 직전 재사용을 방지
+  const expiresAt = Date.now() + (Number(expiresIn || 3600) - 300) * 1000;
+  localStorage.setItem(TOKEN_STORAGE_KEY, token);
+  localStorage.setItem(TOKEN_EXPIRY_KEY, String(expiresAt));
+}
+
+function loadCachedToken() {
+  const token  = localStorage.getItem(TOKEN_STORAGE_KEY);
+  const expiry = Number(localStorage.getItem(TOKEN_EXPIRY_KEY) || 0);
+  return (token && Date.now() < expiry) ? token : null;
+}
+
+function clearToken() {
+  localStorage.removeItem(TOKEN_STORAGE_KEY);
+  localStorage.removeItem(TOKEN_EXPIRY_KEY);
+}
+
 function initAuth() {
   if (!window.google) { setTimeout(initAuth, 300); return; }
   tokenClient = google.accounts.oauth2.initTokenClient({
@@ -1023,13 +1044,22 @@ function initAuth() {
     callback: onAuthSuccess,
     error_callback: onAuthError,
   });
-  // Show login button once Google libs are ready
-  document.getElementById('loginBtn').style.display = 'inline-flex';
+
+  // 유효한 캐시 토큰이 있으면 로그인 화면 없이 바로 대시보드 로드
+  const cached = loadCachedToken();
+  if (cached) {
+    accessToken = cached;
+    showDashboard();
+    loadAllSites();
+  } else {
+    document.getElementById('loginBtn').style.display = 'inline-flex';
+  }
 }
 
 function onAuthSuccess(resp) {
   if (resp.error) { onAuthError(resp); return; }
   accessToken = resp.access_token;
+  saveToken(resp.access_token, resp.expires_in);
   console.log('[Auth] granted scope:', resp.scope);
   if (!resp.scope || !resp.scope.includes('analytics')) {
     alert('Google Analytics 권한이 포함되지 않았습니다.\n\nGoogle Cloud Console → OAuth 동의 화면에서\n"analytics.readonly" 범위를 추가한 후 다시 시도해 주세요.');
@@ -1044,17 +1074,25 @@ function onAuthError(err) {
 }
 
 function handleAuthExpired() {
+  clearToken();
   accessToken = null;
-  showLoginScreen();
+  // 팝업 없이 자동 갱신 시도; 실패하면 로그인 화면으로 이동
+  if (tokenClient) {
+    tokenClient.requestAccessToken({ prompt: '' });
+  } else {
+    showLoginScreen();
+  }
 }
 
 function login() {
   if (!tokenClient) { alert('Google 라이브러리 로딩 중입니다. 잠시 후 다시 시도해 주세요.'); return; }
-  tokenClient.requestAccessToken({ prompt: 'consent' });
+  // prompt: '' → 이미 동의한 계정은 화면 없이 바로 토큰 발급
+  tokenClient.requestAccessToken({ prompt: '' });
 }
 
 function logout() {
   if (accessToken) google.accounts.oauth2.revoke(accessToken);
+  clearToken();
   accessToken = null;
   showLoginScreen();
 }
@@ -1100,6 +1138,7 @@ document.addEventListener('DOMContentLoaded', () => {
 // ── Init ──────────────────────────────────────────
 
 window.addEventListener('load', () => {
-  initAuth();
+  // 캐시 토큰 여부는 initAuth 내부에서 판단 → 여기선 로그인 화면만 기본 표시
   showLoginScreen();
+  initAuth();
 });
