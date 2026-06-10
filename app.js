@@ -318,21 +318,27 @@ async function fetchPrevTopPages(site, paths) {
   });
 }
 
-// Top countries for selected month (English property)
+// Top countries: current month + previous month (English property)
 async function fetchTopCountries(site) {
-  const { startDate, endDate } = getMonthRange(selectedYear, selectedMonth);
+  const { startDate: cs, endDate: ce } = getMonthRange(selectedYear, selectedMonth);
+  const prev = getPrevMonth(selectedYear, selectedMonth);
+  const { startDate: ps, endDate: pe } = getMonthRange(prev.y, prev.m);
   const enLang = site.languages.find(l => l.code === 'en');
   const { propId, filter } = enLang
     ? getLangQuery(site, enLang)
     : { propId: getSitePropertyList(site)[0], filter: undefined };
 
   return runReport(propId, {
-    dateRanges: [{ startDate, endDate }],
+    dateRanges: [
+      { startDate: cs, endDate: ce },
+      { startDate: ps, endDate: pe },
+    ],
     metrics: ['totalUsers'],
     dimensions: ['country'],
     dimensionFilter: filter,
     orderBys: [{ metric: { metricName: 'totalUsers' }, desc: true }],
-    limit: 10,
+    // 행이 (국가 × 기간) 단위로 반환되므로 충분히 크게 요청 후 파싱 시 Top 10 선별
+    limit: 200,
   });
 }
 
@@ -383,13 +389,32 @@ function parseTopPages(report) {
 
 function parseTopCountries(report) {
   const rows = report?.rows || [];
-  const total = rows.reduce((sum, r) => sum + Number(r.metricValues[0].value || 0), 0);
-  return rows.slice(0, 10).map((r, i) => ({
-    rank: i + 1,
-    country: r.dimensionValues[0].value,
-    users: Number(r.metricValues[0].value || 0),
-    share: total > 0 ? (Number(r.metricValues[0].value || 0) / total * 100) : 0,
-  }));
+  // 2개 dateRange 요청 시 dateRange 차원이 자동 추가됨 (국가 × 기간 행)
+  const dimHeaders = report?.dimensionHeaders || [];
+  const drIdx = dimHeaders.findIndex(h => h.name === 'dateRange');
+  const cIdx = dimHeaders.findIndex(h => h.name === 'country');
+
+  const currMap = {};
+  const prevMap = {};
+  rows.forEach(r => {
+    const country = r.dimensionValues[cIdx >= 0 ? cIdx : 0].value;
+    const users = Number(r.metricValues[0].value || 0);
+    const range = drIdx >= 0 ? r.dimensionValues[drIdx].value : 'date_range_0';
+    if (range === 'date_range_1') prevMap[country] = (prevMap[country] || 0) + users;
+    else currMap[country] = (currMap[country] || 0) + users;
+  });
+
+  const total = Object.values(currMap).reduce((s, v) => s + v, 0);
+  return Object.keys(currMap)
+    .sort((a, b) => currMap[b] - currMap[a])
+    .slice(0, 10)
+    .map((country, i) => ({
+      rank: i + 1,
+      country,
+      users: currMap[country],
+      prevUsers: prevMap[country] ?? null,
+      share: total > 0 ? (currMap[country] / total * 100) : 0,
+    }));
 }
 
 // ── Rendering: Overview ───────────────────────────
@@ -673,11 +698,12 @@ function renderSiteSection(site) {
   let topCountriesHTML = '';
   if (site.showCountries) {
     const countryRows = topCountries.length === 0
-      ? `<tr><td colspan="4" style="color:#9CA3AF;text-align:center">데이터 없음</td></tr>`
+      ? `<tr><td colspan="5" style="color:#9CA3AF;text-align:center">데이터 없음</td></tr>`
       : topCountries.map((c, idx) => `
           <tr style="background:${idx % 2 === 1 ? site.altRowColor : ''}">
             <td style="color:#6B7280">${c.rank}</td>
             <td>${c.country}</td>
+            <td>${c.prevUsers !== null ? fmtNum(c.prevUsers) : '–'}</td>
             <td>${fmtNum(c.users)}</td>
             <td>${c.share.toFixed(1)}%</td>
           </tr>`).join('');
@@ -690,7 +716,7 @@ function renderSiteSection(site) {
         </div>
         <table class="report-table">
           <thead style="background:${site.tableColor}">
-            <tr><th>순위</th><th>국가</th><th>당월 UV</th><th>비중</th></tr>
+            <tr><th>순위</th><th>국가</th><th>전월 UV</th><th>당월 UV</th><th>비중</th></tr>
           </thead>
           <tbody>${countryRows}</tbody>
         </table>
