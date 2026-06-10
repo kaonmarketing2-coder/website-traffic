@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Kaon Group — Traffic Dashboard</title>
+  <title>KAON Group — Monthly Traffic Dashboard</title>
   <link rel="stylesheet" href="styles.css" />
   <!-- Chart.js -->
   <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.4/dist/chart.umd.min.js"></script>
@@ -14,35 +14,36 @@
 
 <!-- ── Header ── -->
 <header>
-  <div class="header-content">
-    <div class="logo">
-      <h1>Kaon Group</h1>
-      <span>Traffic Analytics Dashboard</span>
+  <div class="header-inner">
+    <div class="header-brand">
+      <svg class="kaon-logo-svg" viewBox="0 0 108 34" xmlns="http://www.w3.org/2000/svg">
+        <text x="0" y="28" font-family="'Arial Black',Arial,sans-serif" font-size="30" font-weight="900" fill="#1A1A1A">KA</text>
+        <circle cx="71" cy="17" r="13" fill="#E87722"/>
+        <path d="M71 8v7" stroke="white" stroke-width="2.5" stroke-linecap="round"/>
+        <path d="M65.5 12.5 A8.5 8.5 0 1 0 76.5 12.5" fill="none" stroke="white" stroke-width="2.2" stroke-linecap="round"/>
+        <text x="86" y="28" font-family="'Arial Black',Arial,sans-serif" font-size="30" font-weight="900" fill="#1A1A1A">N</text>
+      </svg>
+      <span class="header-subtitle">Website Monthly Traffic Dashboard</span>
     </div>
     <div id="headerControls" class="header-controls" style="display:none">
-      <select id="dateRange">
-        <option value="7">최근 7일</option>
-        <option value="30" selected>최근 30일</option>
-        <option value="90">최근 90일</option>
-      </select>
-      <button id="refreshBtn" class="btn btn-refresh" title="새로고침">
-        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+      <select id="monthPicker"></select>
+      <button id="refreshBtn" class="btn btn-outline" title="새로고침">
+        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
           <polyline points="23 4 23 10 17 10"/><polyline points="1 20 1 14 7 14"/>
           <path d="M3.51 9a9 9 0 0114.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0020.49 15"/>
         </svg>
         새로고침
       </button>
-      <button id="logoutBtn" class="btn btn-logout">로그아웃</button>
+      <button id="logoutBtn" class="btn btn-outline">로그아웃</button>
     </div>
-    <!-- Header login button (when not logged in, hidden by default) -->
-    <button id="loginBtn" class="btn btn-google" style="display:none">
+    <button id="loginBtn" class="btn btn-login" style="display:none">
       <svg width="16" height="16" viewBox="0 0 18 18">
         <path fill="#4285F4" d="M17.64 9.2c0-.637-.057-1.251-.164-1.84H9v3.481h4.844c-.209 1.125-.843 2.078-1.796 2.716v2.259h2.908c1.702-1.567 2.684-3.875 2.684-6.615z"/>
         <path fill="#34A853" d="M9 18c2.43 0 4.467-.806 5.956-2.18l-2.908-2.259c-.806.54-1.837.86-3.048.86-2.344 0-4.328-1.584-5.036-3.711H.957v2.332A8.997 8.997 0 009 18z"/>
         <path fill="#FBBC05" d="M3.964 10.71A5.41 5.41 0 013.682 9c0-.593.102-1.17.282-1.71V4.958H.957A8.996 8.996 0 000 9c0 1.452.348 2.827.957 4.042l3.007-2.332z"/>
         <path fill="#EA4335" d="M9 3.58c1.321 0 2.508.454 3.44 1.345l2.582-2.58C13.463.891 11.426 0 9 0A8.997 8.997 0 00.957 4.958L3.964 6.29C4.672 4.163 6.656 3.58 9 3.58z"/>
       </svg>
-      Google로 로그인
+      Google 로그인
     </button>
   </div>
 </header>
@@ -50,22 +51,23 @@
 <!-- ── Login Screen ── -->
 <div id="loginScreen" style="display:none">
   <div class="login-card">
-    <div class="login-icon">
-      <svg width="36" height="36" viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
-        <line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/>
-        <line x1="6" y1="20" x2="6" y2="14"/>
+    <div class="login-logo-wrap">
+      <svg viewBox="0 0 108 34" xmlns="http://www.w3.org/2000/svg" style="height:40px;display:block;margin:0 auto 20px">
+        <text x="0" y="28" font-family="'Arial Black',Arial,sans-serif" font-size="30" font-weight="900" fill="#1A1A1A">KA</text>
+        <circle cx="71" cy="17" r="13" fill="#E87722"/>
+        <path d="M71 8v7" stroke="white" stroke-width="2.5" stroke-linecap="round"/>
+        <path d="M65.5 12.5 A8.5 8.5 0 1 0 76.5 12.5" fill="none" stroke="white" stroke-width="2.2" stroke-linecap="round"/>
+        <text x="86" y="28" font-family="'Arial Black',Arial,sans-serif" font-size="30" font-weight="900" fill="#1A1A1A">N</text>
       </svg>
     </div>
-    <h2>Kaon Group 트래픽 대시보드</h2>
-    <p>Google Analytics와 연결하여 4개 사이트의<br>실시간 트래픽 데이터를 한눈에 확인하세요.</p>
-
-    <div class="sites-preview">
-      <span class="site-tag" style="background:#0066CC">Kaon Group</span>
-      <span class="site-tag" style="background:#00A86B">Kaon Broadband</span>
-      <span class="site-tag" style="background:#FF6B35">Kaon Robotics</span>
-      <span class="site-tag" style="background:#7B2FBE">Kaon Media</span>
+    <h2>Monthly Traffic Report</h2>
+    <p>Google Analytics와 연결하여 KAON Group 4개 사이트의<br>월간 트래픽 데이터를 확인하세요.</p>
+    <div class="login-site-tags">
+      <span class="login-tag" style="background:#E87722">KAON GROUP</span>
+      <span class="login-tag" style="background:#1E40AF">KAON BROADBAND</span>
+      <span class="login-tag" style="background:#1E40AF">KAON ROBOTICS</span>
+      <span class="login-tag" style="background:#E87722">KAON MEDIA</span>
     </div>
-
     <button id="loginBtnMain" class="btn btn-google-large">
       <svg width="18" height="18" viewBox="0 0 18 18">
         <path fill="#4285F4" d="M17.64 9.2c0-.637-.057-1.251-.164-1.84H9v3.481h4.844c-.209 1.125-.843 2.078-1.796 2.716v2.259h2.908c1.702-1.567 2.684-3.875 2.684-6.615z"/>
@@ -75,96 +77,67 @@
       </svg>
       Google Analytics로 로그인
     </button>
-
-    <p class="setup-note">
-      처음 사용하신다면 <a href="#setup-guide" onclick="toggleGuide()">설정 가이드</a>를 참고하세요.
-    </p>
-
-    <!-- Setup guide (collapsible) -->
-    <div id="setupGuide" style="display:none; text-align:left; margin-top:24px; border-top:1px solid var(--border); padding-top:20px;">
-      <p style="font-size:13px; font-weight:700; margin-bottom:12px; color:var(--text)">⚙️ 초기 설정 방법</p>
-      <ol style="font-size:12px; color:var(--text-muted); line-height:2; padding-left:16px;">
-        <li><a href="https://console.cloud.google.com/" target="_blank">Google Cloud Console</a> 접속 → 프로젝트 생성</li>
-        <li>API 및 서비스 → Google Analytics Data API 활성화</li>
-        <li>사용자 인증 정보 → OAuth 2.0 클라이언트 ID 생성 (웹 애플리케이션)</li>
-        <li>승인된 자바스크립트 원본에 이 페이지 URL 추가</li>
-        <li><code style="background:#f0f4f8;padding:1px 4px;border-radius:3px;">config.js</code>에 Client ID와 GA4 Property ID 4개 입력</li>
-        <li>각 GA4 속성에서 방금 만든 OAuth Client ID 계정에 뷰어 권한 부여</li>
-      </ol>
-    </div>
   </div>
 </div>
 
 <!-- ── Dashboard ── -->
 <main id="dashboard" style="display:none">
 
-  <!-- Config warning banner -->
-  <div id="configBanner" class="config-banner" style="display:none">
-    ⚠️ <strong>설정 필요:</strong> <code>config.js</code>에서 <code>OAUTH_CLIENT_ID</code>와 각 사이트의 <code>propertyId</code>를 실제 값으로 변경해 주세요.
+  <!-- Section 1: Overview -->
+  <div class="report-section">
+    <div class="section-title" id="overviewTitle">Monthly Web Analytics Overview</div>
+
+    <!-- 4 KPI Cards -->
+    <div class="overview-cards" id="overviewCards">
+      <!-- populated by JS -->
+    </div>
+
+    <!-- YoY Row -->
+    <div class="yoy-row">
+      <div class="yoy-table-wrap">
+        <div class="subsection-title">전년 동월 비교 (YoY)</div>
+        <table class="report-table yoy-table">
+          <thead>
+            <tr>
+              <th>사이트</th>
+              <th>전년 PV</th>
+              <th>당월 PV</th>
+              <th>증감률</th>
+              <th>전년 UV</th>
+              <th>당월 UV</th>
+              <th>증감률</th>
+            </tr>
+          </thead>
+          <tbody id="yoyTableBody">
+            <!-- populated by JS -->
+          </tbody>
+        </table>
+      </div>
+      <div class="yoy-chart-wrap">
+        <div class="subsection-title">사이트별 PV 비교 (YoY)</div>
+        <div class="chart-wrap-yoy">
+          <canvas id="yoyChart"></canvas>
+        </div>
+      </div>
+    </div>
   </div>
 
-  <!-- ① 사이트별 트래픽 요약 (언어 탭 포함) -->
-  <section>
-    <div class="section-header">
-      <h2>사이트별 트래픽 요약</h2>
-      <span class="last-updated" id="lastUpdated"></span>
-    </div>
-    <div class="sites-grid" id="sitesGrid"></div>
-  </section>
-
-  <!-- ② 일별 트래픽 추이 (언어 탭으로 전환 가능) -->
-  <section class="trend-section">
-    <div class="section-header">
-      <h2>일별 트래픽 추이</h2>
-    </div>
-    <div class="trend-grid" id="trendGrid"></div>
-  </section>
-
-  <!-- ③ 언어별 세션/사용자 비교 (사이트별) -->
-  <section class="lang-compare-section">
-    <div class="section-header">
-      <h2>언어 버전별 비교</h2>
-    </div>
-    <div class="lang-compare-grid" id="langCompareGrid"></div>
-  </section>
-
-  <!-- ④ 4개 사이트 전체 비교 -->
-  <section class="overview-section">
-    <div class="section-header">
-      <h2>사이트 간 전체 비교</h2>
-    </div>
-    <div class="overview-grid">
-      <div class="chart-card">
-        <h3>세션 수</h3>
-        <div class="chart-wrap">
-          <canvas id="overviewSessionsChart"></canvas>
-        </div>
-      </div>
-      <div class="chart-card">
-        <h3>사용자 수</h3>
-        <div class="chart-wrap">
-          <canvas id="overviewUsersChart"></canvas>
-        </div>
-      </div>
-    </div>
-  </section>
+  <!-- Section 2-5: Per-site detail sections -->
+  <div id="siteDetailsContainer">
+    <!-- populated by JS -->
+  </div>
 
 </main>
+
+<!-- ── Footer ── -->
+<footer>
+  KAON Group Corp. | Copyright &copy; <span id="footerYear"></span> KAON Group Co., Ltd.
+</footer>
 
 <script src="config.js"></script>
 <script src="app.js"></script>
 <script>
-  function toggleGuide() {
-    const guide = document.getElementById('setupGuide');
-    guide.style.display = guide.style.display === 'none' ? 'block' : 'none';
-  }
-
-  // config.js 로드 후 설정값 확인
-  window.addEventListener('load', () => {
-    if (typeof CONFIG !== 'undefined' && CONFIG.OAUTH_CLIENT_ID.includes('YOUR_')) {
-      document.getElementById('configBanner').style.display = 'flex';
-    }
-  });
+  document.getElementById('footerYear').textContent = new Date().getFullYear();
 </script>
 
 </body>

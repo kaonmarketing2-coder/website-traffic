@@ -1,88 +1,116 @@
 // =====================================================
-// Kaon Group - GA4 Traffic Dashboard
+// KAON Group - GA4 Monthly Traffic Dashboard
 // =====================================================
 
 const GA4_API = 'https://analyticsdata.googleapis.com/v1beta/properties';
 const SCOPE = 'https://www.googleapis.com/auth/analytics.readonly';
 
+// ── State ─────────────────────────────────────────
 let tokenClient = null;
 let accessToken = null;
-let currentDays = 30;
+let selectedYear = null;
+let selectedMonth = null;
 
-// 캐시: siteData[siteId][langCode] = { totals, rows }
-const siteData = {};
-// 현재 선택된 언어 탭: activeLang[siteId] = langCode
-const activeLang = {};
-// Chart 인스턴스
+// cache[siteId] = { summary, yoy, trend, langs, topPages, topCountries }
+const cache = {};
+// chart instances keyed by canvas id
 const charts = {};
 
-// ── 날짜 / 포맷 유틸 ─────────────────────────────
+// ── Date Utilities ────────────────────────────────
 
-function getDateRange(days) {
-  const end = new Date();
-  const start = new Date();
-  start.setDate(end.getDate() - days + 1);
-  return {
-    startDate: start.toISOString().slice(0, 10),
-    endDate: end.toISOString().slice(0, 10),
-  };
+function getMonthRange(y, m) {
+  const pad = n => String(n).padStart(2, '0');
+  const startDate = `${y}-${pad(m)}-01`;
+  const lastDay = new Date(y, m, 0).getDate();
+  const endDate = `${y}-${pad(m)}-${pad(lastDay)}`;
+  return { startDate, endDate };
 }
 
-function fmtDate(yyyymmdd) {
-  const s = String(yyyymmdd);
-  return `${s.slice(4, 6)}/${s.slice(6, 8)}`;
+function getPrevMonth(y, m) {
+  if (m === 1) return { y: y - 1, m: 12 };
+  return { y, m: m - 1 };
 }
+
+function getYoYMonth(y, m) {
+  return { y: y - 1, m };
+}
+
+function fmtMonthLabel(y, m) {
+  return `${y}년 ${m}월`;
+}
+
+// "202601" → "1월"
+function fmtYearMonth(yyyymm) {
+  const s = String(yyyymm);
+  return `${parseInt(s.slice(4, 6), 10)}월`;
+}
+
+// ── Format Utilities ──────────────────────────────
 
 function fmtNum(n) {
   if (n === null || n === undefined || isNaN(n)) return '–';
-  if (n >= 1_000_000) return (n / 1_000_000).toFixed(1) + 'M';
-  if (n >= 1_000) return (n / 1_000).toFixed(1) + 'K';
-  return Math.round(n).toLocaleString('ko-KR');
+  const num = Math.round(Number(n));
+  if (num >= 1_000_000) return (num / 1_000_000).toFixed(1) + 'M';
+  if (num >= 10_000) return num.toLocaleString('ko-KR');
+  return num.toLocaleString('ko-KR');
 }
 
-function fmtDuration(sec) {
-  if (!sec || isNaN(sec)) return '–';
-  const m = Math.floor(sec / 60);
-  const s = Math.round(sec % 60);
-  return `${m}:${String(s).padStart(2, '0')}`;
+// Returns { text: "▲ 13.8%", dir: "up"|"down"|"neutral" }
+function fmtPct(curr, prev) {
+  if (!prev || prev === 0) return { text: '–', dir: 'neutral' };
+  const diff = ((curr - prev) / prev) * 100;
+  if (Math.abs(diff) < 0.05) return { text: '±0.0%', dir: 'neutral' };
+  if (diff > 0) return { text: `▲ ${diff.toFixed(1)}%`, dir: 'up' };
+  return { text: `▼ ${Math.abs(diff).toFixed(1)}%`, dir: 'down' };
 }
 
-function fmtPct(val) {
-  if (val === null || isNaN(val)) return '–';
-  return (val * 100).toFixed(1) + '%';
+// ── Month Picker ──────────────────────────────────
+
+function populateMonthPicker() {
+  const sel = document.getElementById('monthPicker');
+  sel.innerHTML = '';
+  const now = new Date();
+  // default to previous completed month
+  let defY = now.getFullYear();
+  let defM = now.getMonth(); // 0-based, so this IS the previous month (current month = getMonth()+1)
+  if (defM === 0) { defY -= 1; defM = 12; }
+
+  for (let i = 0; i < 12; i++) {
+    let m = defM - i;
+    let y = defY;
+    while (m <= 0) { m += 12; y -= 1; }
+    const opt = document.createElement('option');
+    const val = `${y}-${String(m).padStart(2, '0')}`;
+    opt.value = val;
+    opt.textContent = fmtMonthLabel(y, m);
+    sel.appendChild(opt);
+  }
+
+  sel.value = `${defY}-${String(defM).padStart(2, '0')}`;
+  applyMonthPicker();
 }
 
-// ── GA4 API ──────────────────────────────────────
-
-function buildDimensionFilter(filterField, filterValue) {
-  if (!filterValue) return null;
-  return {
-    dimensionFilter: {
-      filter: {
-        fieldName: filterField,
-        stringFilter: { matchType: 'CONTAINS', value: filterValue, caseSensitive: false },
-      },
-    },
-  };
+function applyMonthPicker() {
+  const val = document.getElementById('monthPicker').value;
+  const [y, m] = val.split('-').map(Number);
+  selectedYear = y;
+  selectedMonth = m;
+  const title = document.getElementById('overviewTitle');
+  if (title) title.textContent = `Monthly Web Analytics Overview: ${fmtMonthLabel(y, m)}`;
 }
 
-async function runReport(propertyId, days, filterField, filterValue) {
-  const { startDate, endDate } = getDateRange(days);
+// ── GA4 API ───────────────────────────────────────
+
+async function runReport(propertyId, { dateRanges, metrics, dimensions, dimensionFilter, orderBys, limit }) {
   const body = {
-    dateRanges: [{ startDate, endDate }],
-    metrics: [
-      { name: 'sessions' },
-      { name: 'totalUsers' },
-      { name: 'screenPageViews' },
-      { name: 'bounceRate' },
-      { name: 'averageSessionDuration' },
-      { name: 'newUsers' },
-    ],
-    dimensions: [{ name: 'date' }],
-    orderBys: [{ dimension: { dimensionName: 'date' }, desc: false }],
+    dateRanges,
+    metrics: metrics.map(name => ({ name })),
     metricAggregations: ['TOTAL'],
-    ...buildDimensionFilter(filterField, filterValue),
   };
+  if (dimensions && dimensions.length) body.dimensions = dimensions.map(name => ({ name }));
+  if (dimensionFilter) body.dimensionFilter = dimensionFilter;
+  if (orderBys) body.orderBys = orderBys;
+  if (limit) body.limit = limit;
 
   const res = await fetch(`${GA4_API}/${propertyId}:runReport`, {
     method: 'POST',
@@ -94,39 +122,790 @@ async function runReport(propertyId, days, filterField, filterValue) {
   });
 
   if (res.status === 401) { handleAuthExpired(); throw new Error('인증 만료'); }
+  if (res.status === 403) { throw new Error('접근 권한 없음 (403)'); }
   if (!res.ok) {
-    const body = await res.json().catch(() => ({}));
-    const msg = body?.error?.message || body?.error?.status || `HTTP ${res.status}`;
-    throw new Error(`[${res.status}] ${msg}`);
+    let errMsg = `HTTP ${res.status}`;
+    try {
+      const errBody = await res.json();
+      errMsg = errBody?.error?.message || errMsg;
+    } catch (_) {}
+    throw new Error(errMsg);
   }
   return res.json();
 }
 
-function parseReport(data) {
-  const rows = (data.rows || []).map(r => ({
-    date: r.dimensionValues[0].value,
-    sessions:     Number(r.metricValues[0].value),
-    users:        Number(r.metricValues[1].value),
-    pageviews:    Number(r.metricValues[2].value),
-    bounceRate:   Number(r.metricValues[3].value),
-    avgDuration:  Number(r.metricValues[4].value),
-    newUsers:     Number(r.metricValues[5].value),
-  }));
-  const t = data.totals?.[0]?.metricValues || [];
+function containsFilter(fieldName, value, caseSensitive = false) {
   return {
-    rows,
-    totals: {
-      sessions:    Number(t[0]?.value || 0),
-      users:       Number(t[1]?.value || 0),
-      pageviews:   Number(t[2]?.value || 0),
-      bounceRate:  Number(t[3]?.value || 0),
-      avgDuration: Number(t[4]?.value || 0),
-      newUsers:    Number(t[5]?.value || 0),
+    filter: {
+      fieldName,
+      stringFilter: { matchType: 'CONTAINS', value, caseSensitive },
     },
   };
 }
 
-// ── Auth ─────────────────────────────────────────
+// ── Data Fetching ─────────────────────────────────
+
+// Current month + previous month totals (no dimension)
+async function fetchSummary(site) {
+  const { startDate: cs, endDate: ce } = getMonthRange(selectedYear, selectedMonth);
+  const prev = getPrevMonth(selectedYear, selectedMonth);
+  const { startDate: ps, endDate: pe } = getMonthRange(prev.y, prev.m);
+  return runReport(site.propertyId, {
+    dateRanges: [
+      { startDate: cs, endDate: ce },
+      { startDate: ps, endDate: pe },
+    ],
+    metrics: ['screenPageViews', 'totalUsers'],
+  });
+}
+
+// Current month + same month last year
+async function fetchYoY(site) {
+  const { startDate: cs, endDate: ce } = getMonthRange(selectedYear, selectedMonth);
+  const yoy = getYoYMonth(selectedYear, selectedMonth);
+  const { startDate: ys, endDate: ye } = getMonthRange(yoy.y, yoy.m);
+  return runReport(site.propertyId, {
+    dateRanges: [
+      { startDate: cs, endDate: ce },
+      { startDate: ys, endDate: ye },
+    ],
+    metrics: ['screenPageViews', 'totalUsers'],
+  });
+}
+
+// Jan 1 of selected year → end of selected month, grouped by yearMonth
+async function fetchTrend(site) {
+  const { endDate } = getMonthRange(selectedYear, selectedMonth);
+  return runReport(site.propertyId, {
+    dateRanges: [{ startDate: `${selectedYear}-01-01`, endDate }],
+    metrics: ['screenPageViews', 'totalUsers'],
+    dimensions: ['yearMonth'],
+    orderBys: [{ dimension: { dimensionName: 'yearMonth' }, desc: false }],
+  });
+}
+
+// Per-language totals for current month + previous month
+async function fetchLangs(site) {
+  const { startDate: cs, endDate: ce } = getMonthRange(selectedYear, selectedMonth);
+  const prev = getPrevMonth(selectedYear, selectedMonth);
+  const { startDate: ps, endDate: pe } = getMonthRange(prev.y, prev.m);
+
+  const nonAll = site.languages.filter(l => l.code !== 'all');
+  const results = {};
+
+  await Promise.all(nonAll.map(async lang => {
+    try {
+      const report = await runReport(site.propertyId, {
+        dateRanges: [
+          { startDate: cs, endDate: ce },
+          { startDate: ps, endDate: pe },
+        ],
+        metrics: ['screenPageViews', 'totalUsers'],
+        dimensionFilter: lang.filterValue
+          ? containsFilter(site.filterField, lang.filterValue)
+          : undefined,
+      });
+      results[lang.code] = report;
+    } catch (err) {
+      console.warn(`[${site.name}/${lang.label}] lang fetch failed:`, err.message);
+      results[lang.code] = null;
+    }
+  }));
+
+  return results;
+}
+
+// Top pages for selected month, filtered by topPagesLang
+async function fetchTopPages(site) {
+  const { startDate, endDate } = getMonthRange(selectedYear, selectedMonth);
+  const lang = site.languages.find(l => l.code === site.topPagesLang);
+  const filter = (lang && lang.filterValue)
+    ? containsFilter(site.filterField, lang.filterValue)
+    : undefined;
+
+  return runReport(site.propertyId, {
+    dateRanges: [{ startDate, endDate }],
+    metrics: ['screenPageViews'],
+    dimensions: ['pagePath'],
+    dimensionFilter: filter,
+    orderBys: [{ metric: { metricName: 'screenPageViews' }, desc: true }],
+    limit: 10,
+  });
+}
+
+// Get prev month views for the same page paths
+async function fetchPrevTopPages(site, paths) {
+  if (!paths || paths.length === 0) return null;
+  const prev = getPrevMonth(selectedYear, selectedMonth);
+  const { startDate, endDate } = getMonthRange(prev.y, prev.m);
+  const lang = site.languages.find(l => l.code === site.topPagesLang);
+  const filter = (lang && lang.filterValue)
+    ? containsFilter(site.filterField, lang.filterValue)
+    : undefined;
+
+  return runReport(site.propertyId, {
+    dateRanges: [{ startDate, endDate }],
+    metrics: ['screenPageViews'],
+    dimensions: ['pagePath'],
+    dimensionFilter: filter,
+    orderBys: [{ metric: { metricName: 'screenPageViews' }, desc: true }],
+    limit: 50,
+  });
+}
+
+// Top countries for selected month (English filtered)
+async function fetchTopCountries(site) {
+  const { startDate, endDate } = getMonthRange(selectedYear, selectedMonth);
+  const enLang = site.languages.find(l => l.code === 'en');
+  const filter = (enLang && enLang.filterValue)
+    ? containsFilter(site.filterField, enLang.filterValue)
+    : undefined;
+
+  return runReport(site.propertyId, {
+    dateRanges: [{ startDate, endDate }],
+    metrics: ['totalUsers'],
+    dimensions: ['country'],
+    dimensionFilter: filter,
+    orderBys: [{ metric: { metricName: 'totalUsers' }, desc: true }],
+    limit: 10,
+  });
+}
+
+// ── Parsing ───────────────────────────────────────
+
+function parseTotals(report, rangeIndex) {
+  const totals = report?.totals?.[rangeIndex]?.metricValues || [];
+  return {
+    pageviews: Number(totals[0]?.value || 0),
+    users: Number(totals[1]?.value || 0),
+  };
+}
+
+function parseTrend(report) {
+  return (report?.rows || []).map(r => ({
+    month: r.dimensionValues[0].value, // "202601"
+    pageviews: Number(r.metricValues[0].value || 0),
+    users: Number(r.metricValues[1].value || 0),
+  }));
+}
+
+function parseTopPages(report) {
+  const rows = report?.rows || [];
+  const total = rows.reduce((sum, r) => sum + Number(r.metricValues[0].value || 0), 0);
+  return rows.slice(0, 5).map(r => ({
+    path: r.dimensionValues[0].value,
+    views: Number(r.metricValues[0].value || 0),
+    share: total > 0 ? (Number(r.metricValues[0].value || 0) / total * 100) : 0,
+  }));
+}
+
+function parseTopCountries(report) {
+  const rows = report?.rows || [];
+  const total = rows.reduce((sum, r) => sum + Number(r.metricValues[0].value || 0), 0);
+  return rows.slice(0, 10).map((r, i) => ({
+    rank: i + 1,
+    country: r.dimensionValues[0].value,
+    users: Number(r.metricValues[0].value || 0),
+    share: total > 0 ? (Number(r.metricValues[0].value || 0) / total * 100) : 0,
+  }));
+}
+
+// ── Rendering: Overview ───────────────────────────
+
+function renderOverview() {
+  renderOverviewCards();
+  renderYoYTable();
+  renderYoYChart();
+}
+
+function renderOverviewCards() {
+  const container = document.getElementById('overviewCards');
+  if (!container) return;
+  container.innerHTML = '';
+
+  CONFIG.SITES.forEach(site => {
+    const d = cache[site.id];
+    if (!d || !d.summary) {
+      // placeholder card
+      const card = document.createElement('div');
+      card.className = 'kpi-card';
+      card.innerHTML = `
+        <div class="kpi-card-header" style="background:${site.color}">${site.name}</div>
+        <div class="kpi-card-body">
+          <div class="loading-state" style="padding:16px 0">
+            <div class="loading-spinner"></div><br>로딩 중...
+          </div>
+        </div>`;
+      container.appendChild(card);
+      return;
+    }
+
+    const curr = parseTotals(d.summary, 0);
+    const prev = parseTotals(d.summary, 1);
+    const pvChg = fmtPct(curr.pageviews, prev.pageviews);
+    const uvChg = fmtPct(curr.users, prev.users);
+
+    const card = document.createElement('div');
+    card.className = 'kpi-card';
+    card.innerHTML = `
+      <div class="kpi-card-header" style="background:${site.color}">${site.name}</div>
+      <div class="kpi-card-body">
+        <div class="kpi-values">
+          <div class="kpi-col">
+            <div class="kpi-label">Pageview</div>
+            <div class="kpi-number">${fmtNum(curr.pageviews)}</div>
+            <div class="kpi-change ${pvChg.dir}">${pvChg.text}</div>
+            <div class="kpi-label" style="margin-top:2px;font-size:10px">vs 전월</div>
+          </div>
+          <div class="kpi-col">
+            <div class="kpi-label">Visitors</div>
+            <div class="kpi-number">${fmtNum(curr.users)}</div>
+            <div class="kpi-change ${uvChg.dir}">${uvChg.text}</div>
+            <div class="kpi-label" style="margin-top:2px;font-size:10px">vs 전월</div>
+          </div>
+        </div>
+      </div>`;
+    container.appendChild(card);
+  });
+}
+
+function renderYoYTable() {
+  const tbody = document.getElementById('yoyTableBody');
+  if (!tbody) return;
+  tbody.innerHTML = '';
+
+  CONFIG.SITES.forEach((site, i) => {
+    const d = cache[site.id];
+    const tr = document.createElement('tr');
+
+    if (d && d.yoy) {
+      const curr = parseTotals(d.yoy, 0);
+      const yoy = parseTotals(d.yoy, 1);
+      const pvChg = fmtPct(curr.pageviews, yoy.pageviews);
+      const uvChg = fmtPct(curr.users, yoy.users);
+      tr.style.background = i % 2 === 1 ? '#FFF8F3' : '';
+      tr.innerHTML = `
+        <td style="font-weight:600">${site.name}</td>
+        <td>${fmtNum(yoy.pageviews)}</td>
+        <td>${fmtNum(curr.pageviews)}</td>
+        <td class="chg-${pvChg.dir}">${pvChg.text}</td>
+        <td>${fmtNum(yoy.users)}</td>
+        <td>${fmtNum(curr.users)}</td>
+        <td class="chg-${uvChg.dir}">${uvChg.text}</td>`;
+    } else {
+      tr.innerHTML = `<td style="font-weight:600">${site.name}</td><td colspan="6" style="color:#9CA3AF">–</td>`;
+    }
+    tbody.appendChild(tr);
+  });
+}
+
+function renderYoYChart() {
+  const canvas = document.getElementById('yoyChart');
+  if (!canvas) return;
+  charts['yoyChart']?.destroy();
+
+  const labels = CONFIG.SITES.map(s => s.name.replace('KAON ', ''));
+  const prevData = CONFIG.SITES.map(site => {
+    const d = cache[site.id];
+    if (!d || !d.yoy) return 0;
+    return parseTotals(d.yoy, 1).pageviews;
+  });
+  const currData = CONFIG.SITES.map(site => {
+    const d = cache[site.id];
+    if (!d || !d.yoy) return 0;
+    return parseTotals(d.yoy, 0).pageviews;
+  });
+
+  const prevYear = getYoYMonth(selectedYear, selectedMonth).y;
+
+  charts['yoyChart'] = new Chart(canvas, {
+    type: 'bar',
+    data: {
+      labels,
+      datasets: [
+        {
+          label: `${prevYear}년`,
+          data: prevData,
+          backgroundColor: ['#E87722', '#1E40AF', '#1E40AF', '#E87722'].map(c => c + '66'),
+          borderColor: ['#E87722', '#1E40AF', '#1E40AF', '#E87722'],
+          borderWidth: 1.5,
+          borderRadius: 3,
+        },
+        {
+          label: `${selectedYear}년`,
+          data: currData,
+          backgroundColor: ['#E87722', '#1E40AF', '#1E40AF', '#E87722'].map(c => c + 'CC'),
+          borderColor: ['#E87722', '#1E40AF', '#1E40AF', '#E87722'],
+          borderWidth: 1.5,
+          borderRadius: 3,
+        },
+      ],
+    },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      plugins: {
+        legend: {
+          position: 'bottom',
+          labels: { boxWidth: 12, font: { size: 11 } },
+        },
+      },
+      scales: {
+        x: { grid: { display: false }, ticks: { font: { size: 11 } } },
+        y: {
+          grid: { color: '#EEF2F7' },
+          ticks: { font: { size: 11 }, callback: v => fmtNum(v) },
+          beginAtZero: true,
+        },
+      },
+    },
+  });
+}
+
+// ── Rendering: Site Section ───────────────────────
+
+function renderSiteSection(site) {
+  const container = document.getElementById('siteDetailsContainer');
+  if (!container) return;
+
+  // Remove existing section for this site if re-rendering
+  const existing = document.getElementById(`detail-${site.id}`);
+  if (existing) existing.remove();
+
+  const d = cache[site.id];
+  if (!d) return;
+
+  // Determine insert position (maintain config order)
+  const siteIndex = CONFIG.SITES.findIndex(s => s.id === site.id);
+  const wrap = document.createElement('div');
+  wrap.className = 'site-section-wrap';
+  wrap.id = `detail-${site.id}`;
+
+  if (d.error) {
+    wrap.innerHTML = `
+      <div class="site-section">
+        <div class="site-header-bar">${site.name}</div>
+        <div class="error-state">${d.error}</div>
+      </div>`;
+    insertAtPosition(container, wrap, siteIndex);
+    return;
+  }
+
+  const curr = parseTotals(d.summary, 0);
+  const prev = parseTotals(d.summary, 1);
+  const pvChg = fmtPct(curr.pageviews, prev.pageviews);
+  const uvChg = fmtPct(curr.users, prev.users);
+  const trendData = d.trend ? parseTrend(d.trend) : [];
+  const langData = d.langs || {};
+  const topPages = d.topPages ? parseTopPages(d.topPages) : [];
+  const prevPagesMap = buildPrevPagesMap(d.prevTopPages);
+  const topCountries = (site.showCountries && d.topCountries) ? parseTopCountries(d.topCountries) : [];
+
+  // Build lang rows for language table
+  const nonAllLangs = site.languages.filter(l => l.code !== 'all');
+
+  // ── Build HTML ──
+  const trendCanvasId = `trend-canvas-${site.id}`;
+  const pieCanvasId = `pie-canvas-${site.id}`;
+
+  // Trend chart cell height
+  const overviewRow = `
+    <div class="site-overview-row">
+      <div class="kpi-box">
+        <div class="kpi-box-label">${selectedMonth}월 Pageview</div>
+        <div class="kpi-box-number">${fmtNum(curr.pageviews)}</div>
+        <div class="kpi-box-change ${pvChg.dir}">${pvChg.text} vs 전월</div>
+        <div class="kpi-box-sublabel">prev. ${fmtNum(prev.pageviews)}</div>
+      </div>
+      <div class="kpi-box">
+        <div class="kpi-box-label">${selectedMonth}월 Visitors</div>
+        <div class="kpi-box-number">${fmtNum(curr.users)}</div>
+        <div class="kpi-box-change ${uvChg.dir}">${uvChg.text} vs 전월</div>
+        <div class="kpi-box-sublabel">prev. ${fmtNum(prev.users)}</div>
+      </div>
+      <div class="kpi-box kpi-box-chart">
+        <div class="kpi-box-chart-label">월별 트렌드 (${selectedYear}년 1월 ~ ${selectedMonth}월)</div>
+        <div class="chart-wrap-trend">
+          <canvas id="${trendCanvasId}"></canvas>
+        </div>
+      </div>
+    </div>`;
+
+  // Language table
+  const langTableRows = nonAllLangs.map((lang, idx) => {
+    const r = langData[lang.code];
+    if (!r) return `<tr style="background:${idx % 2 === 1 ? site.altRowColor : ''}">
+      <td>${lang.label}</td><td colspan="6" style="color:#9CA3AF">–</td></tr>`;
+    const lc = parseTotals(r, 0);
+    const lp = parseTotals(r, 1);
+    const lpvChg = fmtPct(lc.pageviews, lp.pageviews);
+    const luvChg = fmtPct(lc.users, lp.users);
+    return `<tr style="background:${idx % 2 === 1 ? site.altRowColor : ''}">
+      <td>${lang.label}</td>
+      <td>${fmtNum(lp.pageviews)}</td>
+      <td>${fmtNum(lc.pageviews)}</td>
+      <td class="chg-${lpvChg.dir}">${lpvChg.text}</td>
+      <td>${fmtNum(lp.users)}</td>
+      <td>${fmtNum(lc.users)}</td>
+      <td class="chg-${luvChg.dir}">${luvChg.text}</td>
+    </tr>`;
+  }).join('');
+
+  const langSection = `
+    <div class="site-detail-row">
+      <div class="site-detail-cell">
+        <div class="site-detail-cell-title">언어별 트래픽</div>
+        <table class="report-table">
+          <thead style="background:${site.tableColor}">
+            <tr>
+              <th>언어</th><th>전월PV</th><th>당월PV</th><th>증감률</th>
+              <th>전월UV</th><th>당월UV</th><th>증감률</th>
+            </tr>
+          </thead>
+          <tbody>${langTableRows}</tbody>
+        </table>
+      </div>
+      <div class="site-detail-cell">
+        <div class="site-detail-cell-title">언어별 PV 비중</div>
+        <div class="pie-wrap">
+          <canvas id="${pieCanvasId}"></canvas>
+        </div>
+      </div>
+    </div>`;
+
+  // Top pages table
+  const topLangLabel = getLangLabel(site, site.topPagesLang);
+  const topPagesRows = topPages.length === 0
+    ? `<tr><td colspan="4" style="color:#9CA3AF;text-align:center">데이터 없음</td></tr>`
+    : topPages.map((p, idx) => {
+        const prevViews = prevPagesMap[p.path] || 0;
+        return `<tr style="background:${idx % 2 === 1 ? site.altRowColor : ''}">
+          <td style="word-break:break-all;font-size:11px;max-width:200px">${p.path}</td>
+          <td>${fmtNum(p.views)}</td>
+          <td>${p.share.toFixed(1)}%</td>
+          <td>${prevViews ? fmtNum(prevViews) : '–'}</td>
+        </tr>`;
+      }).join('');
+
+  // Top countries table
+  let topCountriesHTML = '';
+  if (site.showCountries) {
+    const countryRows = topCountries.length === 0
+      ? `<tr><td colspan="4" style="color:#9CA3AF;text-align:center">데이터 없음</td></tr>`
+      : topCountries.map((c, idx) => `
+          <tr style="background:${idx % 2 === 1 ? site.altRowColor : ''}">
+            <td style="color:#6B7280">${c.rank}</td>
+            <td>${c.country}</td>
+            <td>${fmtNum(c.users)}</td>
+            <td>${c.share.toFixed(1)}%</td>
+          </tr>`).join('');
+
+    topCountriesHTML = `
+      <div class="site-top-cell">
+        <div class="site-top-cell-title">
+          방문국가 Top 10
+          <span class="lang-badge" style="background:${site.tableColor}">English Only</span>
+        </div>
+        <table class="report-table">
+          <thead style="background:${site.tableColor}">
+            <tr><th>순위</th><th>국가</th><th>당월 UV</th><th>비중</th></tr>
+          </thead>
+          <tbody>${countryRows}</tbody>
+        </table>
+      </div>`;
+  }
+
+  const topSection = `
+    <div class="site-top-row${site.showCountries ? '' : ' single-col'}">
+      <div class="site-top-cell">
+        <div class="site-top-cell-title">
+          방문 페이지 Top 5
+          <span class="lang-badge" style="background:${site.tableColor}">${topLangLabel} Only</span>
+        </div>
+        <table class="report-table">
+          <thead style="background:${site.tableColor}">
+            <tr><th>경로</th><th>당월</th><th>비중</th><th>전월</th></tr>
+          </thead>
+          <tbody>${topPagesRows}</tbody>
+        </table>
+      </div>
+      ${topCountriesHTML}
+    </div>`;
+
+  wrap.innerHTML = `
+    <div class="site-section">
+      <div class="site-header-bar">
+        ${site.name}
+        <a href="${site.url}" target="_blank" rel="noopener">${site.url}</a>
+      </div>
+      ${overviewRow}
+      ${langSection}
+      ${topSection}
+    </div>`;
+
+  insertAtPosition(container, wrap, siteIndex);
+
+  // Render charts after DOM insertion
+  requestAnimationFrame(() => {
+    renderTrendChart(site, trendData, trendCanvasId);
+    renderLangPie(site, langData, pieCanvasId);
+  });
+}
+
+function getLangLabel(site, code) {
+  const lang = site.languages.find(l => l.code === code);
+  return lang ? lang.label : code;
+}
+
+function buildPrevPagesMap(report) {
+  const map = {};
+  if (!report) return map;
+  (report.rows || []).forEach(r => {
+    map[r.dimensionValues[0].value] = Number(r.metricValues[0].value || 0);
+  });
+  return map;
+}
+
+function insertAtPosition(container, element, index) {
+  const children = container.querySelectorAll(':scope > .site-section-wrap');
+  if (children.length === 0 || index >= children.length) {
+    container.appendChild(element);
+  } else {
+    container.insertBefore(element, children[index]);
+  }
+}
+
+// ── Rendering: Trend Chart ────────────────────────
+
+function renderTrendChart(site, trendData, canvasId) {
+  const canvas = document.getElementById(canvasId);
+  if (!canvas) return;
+  charts[canvasId]?.destroy();
+
+  if (!trendData || trendData.length === 0) {
+    canvas.closest('.chart-wrap-trend').innerHTML = '<div style="color:#9CA3AF;font-size:12px;padding:16px">데이터 없음</div>';
+    return;
+  }
+
+  charts[canvasId] = new Chart(canvas, {
+    type: 'line',
+    data: {
+      labels: trendData.map(d => fmtYearMonth(d.month)),
+      datasets: [
+        {
+          label: 'Pageview',
+          data: trendData.map(d => d.pageviews),
+          borderColor: '#2563EB',
+          backgroundColor: 'transparent',
+          borderWidth: 2,
+          pointRadius: 3,
+          pointBackgroundColor: '#2563EB',
+          fill: false,
+          tension: 0.3,
+        },
+        {
+          label: 'Visitors',
+          data: trendData.map(d => d.users),
+          borderColor: '#E87722',
+          backgroundColor: 'transparent',
+          borderWidth: 2,
+          pointRadius: 3,
+          pointBackgroundColor: '#E87722',
+          fill: false,
+          tension: 0.3,
+        },
+      ],
+    },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      interaction: { mode: 'index', intersect: false },
+      plugins: {
+        legend: {
+          position: 'bottom',
+          labels: { boxWidth: 10, font: { size: 11 }, padding: 8 },
+        },
+      },
+      scales: {
+        x: {
+          grid: { color: '#F3F4F6' },
+          ticks: { font: { size: 10 }, maxTicksLimit: 12 },
+        },
+        y: {
+          grid: { color: '#F3F4F6' },
+          ticks: { font: { size: 10 }, callback: v => fmtNum(v) },
+          beginAtZero: true,
+        },
+      },
+    },
+  });
+}
+
+// ── Rendering: Language Pie ───────────────────────
+
+const PIE_COLORS = ['#2563EB', '#E87722', '#16A34A', '#9333EA', '#DC2626', '#0891B2'];
+
+function renderLangPie(site, langData, canvasId) {
+  const canvas = document.getElementById(canvasId);
+  if (!canvas) return;
+  charts[canvasId]?.destroy();
+
+  const nonAll = site.languages.filter(l => l.code !== 'all');
+  const labels = [];
+  const values = [];
+
+  nonAll.forEach(lang => {
+    const r = langData[lang.code];
+    if (!r) return;
+    const v = parseTotals(r, 0).pageviews;
+    if (v > 0) {
+      labels.push(lang.label);
+      values.push(v);
+    }
+  });
+
+  if (values.length === 0) {
+    canvas.closest('.pie-wrap').innerHTML = '<div style="color:#9CA3AF;font-size:12px;padding:16px">데이터 없음</div>';
+    return;
+  }
+
+  const total = values.reduce((a, b) => a + b, 0);
+
+  charts[canvasId] = new Chart(canvas, {
+    type: 'doughnut',
+    data: {
+      labels,
+      datasets: [{
+        data: values,
+        backgroundColor: PIE_COLORS.slice(0, values.length),
+        borderWidth: 2,
+        borderColor: '#fff',
+      }],
+    },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      plugins: {
+        legend: {
+          position: 'right',
+          labels: {
+            boxWidth: 12,
+            font: { size: 11 },
+            generateLabels(chart) {
+              const data = chart.data;
+              return data.labels.map((label, i) => {
+                const val = data.datasets[0].data[i];
+                const pct = total > 0 ? (val / total * 100).toFixed(1) : '0.0';
+                return {
+                  text: `${label} ${pct}%`,
+                  fillStyle: PIE_COLORS[i] || '#ccc',
+                  hidden: false,
+                  index: i,
+                };
+              });
+            },
+          },
+        },
+        tooltip: {
+          callbacks: {
+            label(ctx) {
+              const pct = total > 0 ? (ctx.raw / total * 100).toFixed(1) : '0.0';
+              return ` ${fmtNum(ctx.raw)} (${pct}%)`;
+            },
+          },
+        },
+      },
+    },
+  });
+}
+
+// ── Load All Sites ────────────────────────────────
+
+async function loadAllSites() {
+  // Clear cache and remove existing site sections
+  CONFIG.SITES.forEach(site => {
+    delete cache[site.id];
+    const el = document.getElementById(`detail-${site.id}`);
+    if (el) el.remove();
+  });
+
+  // Destroy existing charts
+  Object.keys(charts).forEach(k => {
+    charts[k]?.destroy();
+    delete charts[k];
+  });
+
+  // Reset overview
+  document.getElementById('overviewCards').innerHTML = CONFIG.SITES.map(site => `
+    <div class="kpi-card">
+      <div class="kpi-card-header" style="background:${site.color}">${site.name}</div>
+      <div class="kpi-card-body">
+        <div class="loading-state" style="padding:16px 0">
+          <div class="loading-spinner"></div><br>로딩 중...
+        </div>
+      </div>
+    </div>`).join('');
+
+  document.getElementById('yoyTableBody').innerHTML = CONFIG.SITES.map(s =>
+    `<tr><td style="font-weight:600">${s.name}</td><td colspan="6" style="color:#9CA3AF">로딩 중...</td></tr>`
+  ).join('');
+
+  // Load all 4 sites in parallel
+  await Promise.all(CONFIG.SITES.map(site => loadOneSite(site)));
+}
+
+async function loadOneSite(site) {
+  cache[site.id] = {};
+
+  try {
+    // Kick off all fetches in parallel
+    const [summaryRes, yoyRes, trendRes, langsRes, topPagesRes] = await Promise.all([
+      fetchSummary(site).catch(e => { console.error(`[${site.name}] summary:`, e.message); return null; }),
+      fetchYoY(site).catch(e => { console.error(`[${site.name}] yoy:`, e.message); return null; }),
+      fetchTrend(site).catch(e => { console.error(`[${site.name}] trend:`, e.message); return null; }),
+      fetchLangs(site).catch(e => { console.error(`[${site.name}] langs:`, e.message); return null; }),
+      fetchTopPages(site).catch(e => { console.error(`[${site.name}] topPages:`, e.message); return null; }),
+    ]);
+
+    cache[site.id].summary = summaryRes;
+    cache[site.id].yoy = yoyRes;
+    cache[site.id].trend = trendRes;
+    cache[site.id].langs = langsRes || {};
+
+    // Now fetch prev top pages using paths from top pages result
+    let prevTopPagesRes = null;
+    if (topPagesRes) {
+      const paths = (topPagesRes.rows || []).slice(0, 5).map(r => r.dimensionValues[0].value);
+      prevTopPagesRes = await fetchPrevTopPages(site, paths).catch(e => {
+        console.error(`[${site.name}] prevTopPages:`, e.message);
+        return null;
+      });
+    }
+    cache[site.id].topPages = topPagesRes;
+    cache[site.id].prevTopPages = prevTopPagesRes;
+
+    // Top countries (only if needed)
+    if (site.showCountries) {
+      cache[site.id].topCountries = await fetchTopCountries(site).catch(e => {
+        console.error(`[${site.name}] topCountries:`, e.message);
+        return null;
+      });
+    }
+
+    // Render this site's section
+    renderSiteSection(site);
+
+    // Update overview with latest data
+    renderOverview();
+
+  } catch (err) {
+    console.error(`[${site.name}] fatal:`, err.message);
+    cache[site.id].error = err.message;
+    renderSiteSection(site);
+  }
+}
+
+// ── Auth ──────────────────────────────────────────
 
 function initAuth() {
   if (!window.google) { setTimeout(initAuth, 300); return; }
@@ -136,19 +915,20 @@ function initAuth() {
     callback: onAuthSuccess,
     error_callback: onAuthError,
   });
+  // Show login button once Google libs are ready
+  document.getElementById('loginBtn').style.display = 'inline-flex';
 }
 
 function onAuthSuccess(resp) {
   if (resp.error) { onAuthError(resp); return; }
   accessToken = resp.access_token;
-  // 발급된 scope 확인 (콘솔 F12에서 확인 가능)
   console.log('[Auth] granted scope:', resp.scope);
   if (!resp.scope || !resp.scope.includes('analytics')) {
-    alert('⚠️ Google Analytics 권한이 포함되지 않았습니다.\n\nGoogle Cloud Console → OAuth 동의 화면 → 범위 추가에서\n"analytics.readonly" 범위를 추가한 후 다시 시도해 주세요.');
+    alert('Google Analytics 권한이 포함되지 않았습니다.\n\nGoogle Cloud Console → OAuth 동의 화면에서\n"analytics.readonly" 범위를 추가한 후 다시 시도해 주세요.');
     return;
   }
   showDashboard();
-  loadAll();
+  loadAllSites();
 }
 
 function onAuthError(err) {
@@ -162,457 +942,54 @@ function handleAuthExpired() {
 
 function login() {
   if (!tokenClient) { alert('Google 라이브러리 로딩 중입니다. 잠시 후 다시 시도해 주세요.'); return; }
-  if (CONFIG.OAUTH_CLIENT_ID.includes('YOUR_')) { alert('config.js에서 OAUTH_CLIENT_ID를 설정해 주세요.'); return; }
   tokenClient.requestAccessToken({ prompt: 'consent' });
 }
 
 function logout() {
   if (accessToken) google.accounts.oauth2.revoke(accessToken);
   accessToken = null;
-  destroyAllCharts();
   showLoginScreen();
 }
 
-// ── UI 상태 ──────────────────────────────────────
+// ── UI State ──────────────────────────────────────
 
 function showLoginScreen() {
   document.getElementById('loginScreen').style.display = 'flex';
   document.getElementById('dashboard').style.display = 'none';
   document.getElementById('headerControls').style.display = 'none';
+  document.getElementById('loginBtn').style.display = 'inline-flex';
 }
 
 function showDashboard() {
   document.getElementById('loginScreen').style.display = 'none';
   document.getElementById('dashboard').style.display = 'block';
   document.getElementById('headerControls').style.display = 'flex';
+  document.getElementById('loginBtn').style.display = 'none';
 }
 
-function setLastUpdated() {
-  const str = new Date().toLocaleString('ko-KR', {
-    month: 'long', day: 'numeric', hour: '2-digit', minute: '2-digit',
-  });
-  document.getElementById('lastUpdated').textContent = `마지막 업데이트: ${str}`;
-}
+// ── Event Listeners ───────────────────────────────
 
-function destroyAllCharts() {
-  Object.values(charts).forEach(c => c?.destroy?.());
-  Object.keys(charts).forEach(k => delete charts[k]);
-}
+document.addEventListener('DOMContentLoaded', () => {
+  populateMonthPicker();
 
-// ── 언어 탭 렌더링 ────────────────────────────────
+  document.getElementById('loginBtn').addEventListener('click', login);
+  document.getElementById('loginBtnMain').addEventListener('click', login);
+  document.getElementById('logoutBtn').addEventListener('click', logout);
 
-function renderLangTabs(site) {
-  return site.languages.map(lang => `
-    <button
-      class="lang-tab${lang.code === 'all' ? ' active' : ''}"
-      data-site="${site.id}"
-      data-lang="${lang.code}"
-      style="--site-color:${site.color}"
-    >${lang.label}</button>
-  `).join('');
-}
-
-// ── 메트릭 HTML ──────────────────────────────────
-
-function metricsHTML(totals, color) {
-  const items = [
-    { v: fmtNum(totals.sessions),        l: '세션' },
-    { v: fmtNum(totals.users),           l: '사용자' },
-    { v: fmtNum(totals.pageviews),       l: '페이지뷰' },
-    { v: fmtPct(totals.bounceRate),      l: '이탈률' },
-    { v: fmtDuration(totals.avgDuration),l: '평균 체류시간' },
-    { v: fmtNum(totals.newUsers),        l: '신규 사용자' },
-  ];
-  return items.map((item, i) => `
-    <div class="metric-item">
-      <div class="metric-value${i === 0 ? '" style="color:' + color + '"' : '"'}>${item.v}</div>
-      <div class="metric-label">${item.l}</div>
-    </div>
-  `).join('');
-}
-
-function skeletonMetrics() {
-  return Array(6).fill(`
-    <div class="metric-item">
-      <div class="skeleton skeleton-number" style="margin:0 auto 6px"></div>
-      <div class="skeleton skeleton-text" style="width:55%;margin:0 auto"></div>
-    </div>
-  `).join('');
-}
-
-// ── 사이트 카드 생성 ─────────────────────────────
-
-function buildSiteCard(site) {
-  const card = document.createElement('div');
-  card.className = 'site-card';
-  card.id = `card-${site.id}`;
-  card.style.setProperty('--site-color', site.color);
-
-  card.innerHTML = `
-    <div class="site-card-header">
-      <div class="site-card-title">
-        <h3>${site.name}</h3>
-        <div class="site-url">${site.url}</div>
-      </div>
-      <div class="site-status" id="status-${site.id}">
-        <div class="status-dot loading"></div><span>로딩 중</span>
-      </div>
-    </div>
-
-    <div class="lang-tabs" id="tabs-${site.id}">
-      ${renderLangTabs(site)}
-    </div>
-
-    <div class="metrics-grid" id="metrics-${site.id}">
-      ${skeletonMetrics()}
-    </div>
-
-    <div class="mini-chart-wrap">
-      <canvas id="mini-${site.id}"></canvas>
-    </div>
-  `;
-  return card;
-}
-
-// ── 트렌드 카드 생성 ─────────────────────────────
-
-function buildTrendCard(site) {
-  const card = document.createElement('div');
-  card.className = 'chart-card';
-  card.id = `trend-card-${site.id}`;
-  card.innerHTML = `
-    <div class="trend-header">
-      <h3 style="color:${site.color}">${site.name}</h3>
-      <div class="lang-tabs lang-tabs-sm" id="trend-tabs-${site.id}">
-        ${renderLangTabs(site)}
-      </div>
-    </div>
-    <div class="chart-wrap">
-      <canvas id="trend-${site.id}"></canvas>
-    </div>
-  `;
-  return card;
-}
-
-// ── 언어별 비교 카드 생성 ────────────────────────
-
-function buildLangCompareCard(site) {
-  const card = document.createElement('div');
-  card.className = 'chart-card lang-compare-card';
-  card.id = `lang-compare-card-${site.id}`;
-  card.innerHTML = `
-    <h3 style="color:${site.color}">${site.name} — 언어별 비교</h3>
-    <div class="chart-wrap chart-wrap-md">
-      <canvas id="lang-compare-${site.id}"></canvas>
-    </div>
-  `;
-  return card;
-}
-
-// ── 차트: 미니 라인 ──────────────────────────────
-
-function renderMiniChart(site, langCode) {
-  const data = siteData[site.id]?.[langCode];
-  if (!data) return;
-  const canvasId = `mini-${site.id}`;
-  charts[canvasId]?.destroy();
-  charts[canvasId] = new Chart(document.getElementById(canvasId), {
-    type: 'line',
-    data: {
-      labels: data.rows.map(r => fmtDate(r.date)),
-      datasets: [{
-        data: data.rows.map(r => r.sessions),
-        borderColor: site.color,
-        backgroundColor: site.bgColor,
-        borderWidth: 2,
-        pointRadius: 0,
-        fill: true,
-        tension: 0.4,
-      }],
-    },
-    options: {
-      responsive: true,
-      maintainAspectRatio: false,
-      plugins: { legend: { display: false }, tooltip: { enabled: false } },
-      scales: { x: { display: false }, y: { display: false, beginAtZero: true } },
-      animation: { duration: 300 },
-    },
-  });
-}
-
-// ── 차트: 트렌드 라인 ────────────────────────────
-
-function renderTrendChart(site, langCode) {
-  const data = siteData[site.id]?.[langCode];
-  if (!data) return;
-  const canvasId = `trend-${site.id}`;
-  charts[canvasId]?.destroy();
-  charts[canvasId] = new Chart(document.getElementById(canvasId), {
-    type: 'line',
-    data: {
-      labels: data.rows.map(r => fmtDate(r.date)),
-      datasets: [
-        {
-          label: '세션',
-          data: data.rows.map(r => r.sessions),
-          borderColor: site.color,
-          backgroundColor: site.bgColor,
-          borderWidth: 2,
-          pointRadius: data.rows.length <= 14 ? 3 : 0,
-          fill: true,
-          tension: 0.4,
-        },
-        {
-          label: '사용자',
-          data: data.rows.map(r => r.users),
-          borderColor: site.color + '88',
-          borderWidth: 2,
-          borderDash: [4, 4],
-          pointRadius: 0,
-          fill: false,
-          tension: 0.4,
-        },
-      ],
-    },
-    options: {
-      responsive: true,
-      maintainAspectRatio: false,
-      interaction: { mode: 'index', intersect: false },
-      plugins: {
-        legend: { position: 'bottom', labels: { boxWidth: 10, font: { size: 11 } } },
-      },
-      scales: {
-        x: { grid: { color: '#EEF2F7' }, ticks: { font: { size: 11 }, maxTicksLimit: 10 } },
-        y: { grid: { color: '#EEF2F7' }, ticks: { font: { size: 11 } }, beginAtZero: true },
-      },
-    },
-  });
-}
-
-// ── 차트: 언어별 바 차트 ─────────────────────────
-
-function renderLangCompareChart(site) {
-  const langs = site.languages.filter(l => l.code !== 'all');
-  const canvasId = `lang-compare-${site.id}`;
-  charts[canvasId]?.destroy();
-
-  const sessions = langs.map(l => siteData[site.id]?.[l.code]?.totals?.sessions ?? 0);
-  const users    = langs.map(l => siteData[site.id]?.[l.code]?.totals?.users ?? 0);
-
-  // 알파값을 변경한 색상 팔레트 (같은 계열, 밝기 차이)
-  const alpha = ['FF', 'CC', 'AA', '88', '66'];
-  const colors = langs.map((_, i) => site.color + (alpha[i] || '88'));
-
-  charts[canvasId] = new Chart(document.getElementById(canvasId), {
-    type: 'bar',
-    data: {
-      labels: langs.map(l => l.label),
-      datasets: [
-        {
-          label: '세션',
-          data: sessions,
-          backgroundColor: colors,
-          borderColor: langs.map(() => site.color),
-          borderWidth: 2,
-          borderRadius: 5,
-        },
-        {
-          label: '사용자',
-          data: users,
-          backgroundColor: langs.map(() => site.color + '44'),
-          borderColor: langs.map(() => site.color + '99'),
-          borderWidth: 1.5,
-          borderRadius: 5,
-        },
-      ],
-    },
-    options: {
-      responsive: true,
-      maintainAspectRatio: false,
-      interaction: { mode: 'index' },
-      plugins: {
-        legend: { position: 'bottom', labels: { boxWidth: 10, font: { size: 11 } } },
-      },
-      scales: {
-        x: { grid: { display: false }, ticks: { font: { size: 11 } } },
-        y: { grid: { color: '#EEF2F7' }, ticks: { font: { size: 11 } }, beginAtZero: true },
-      },
-    },
-  });
-}
-
-// ── 전체 사이트 비교 차트 ────────────────────────
-
-function renderOverviewCompareCharts() {
-  const labels = CONFIG.SITES.map(s => s.name);
-  const colors = CONFIG.SITES.map(s => s.color);
-
-  ['sessions', 'users'].forEach(metric => {
-    const canvasId = metric === 'sessions' ? 'overviewSessionsChart' : 'overviewUsersChart';
-    charts[canvasId]?.destroy();
-    charts[canvasId] = new Chart(document.getElementById(canvasId), {
-      type: 'bar',
-      data: {
-        labels,
-        datasets: [{
-          label: metric === 'sessions' ? '세션' : '사용자',
-          data: CONFIG.SITES.map(s => siteData[s.id]?.['all']?.totals?.[metric] ?? 0),
-          backgroundColor: colors.map(c => c + 'CC'),
-          borderColor: colors,
-          borderWidth: 2,
-          borderRadius: 6,
-        }],
-      },
-      options: {
-        responsive: true,
-        maintainAspectRatio: false,
-        plugins: { legend: { display: false } },
-        scales: {
-          x: { grid: { display: false }, ticks: { font: { size: 11 } } },
-          y: { grid: { color: '#EEF2F7' }, ticks: { font: { size: 11 } }, beginAtZero: true },
-        },
-      },
-    });
-  });
-}
-
-// ── 사이트 카드 상태 업데이트 ────────────────────
-
-function setSiteLoaded(site) {
-  const statusEl = document.getElementById(`status-${site.id}`);
-  if (statusEl) statusEl.innerHTML = `<div class="status-dot"></div><span>연결됨</span>`;
-}
-
-function setSiteError(site, message) {
-  const statusEl = document.getElementById(`status-${site.id}`);
-  if (statusEl) statusEl.innerHTML = `<div class="status-dot error"></div><span style="color:#EF4444">오류</span>`;
-  const metricsEl = document.getElementById(`metrics-${site.id}`);
-  if (metricsEl) metricsEl.innerHTML = `<div class="error-msg" style="grid-column:1/-1">${message}</div>`;
-}
-
-// ── 탭 클릭 → 메트릭 & 차트 갱신 ────────────────
-
-function switchLang(siteId, langCode, isCard) {
-  const site = CONFIG.SITES.find(s => s.id === siteId);
-  if (!site) return;
-
-  activeLang[siteId] = langCode;
-
-  // 탭 active 클래스 업데이트 (카드탭 또는 트렌드탭)
-  const tabsContainerId = isCard ? `tabs-${siteId}` : `trend-tabs-${siteId}`;
-  document.querySelectorAll(`#${tabsContainerId} .lang-tab`).forEach(btn => {
-    btn.classList.toggle('active', btn.dataset.lang === langCode);
-  });
-
-  const data = siteData[siteId]?.[langCode];
-  if (!data) return;
-
-  if (isCard) {
-    // 카드 메트릭 업데이트
-    const metricsEl = document.getElementById(`metrics-${siteId}`);
-    if (metricsEl) metricsEl.innerHTML = metricsHTML(data.totals, site.color);
-    renderMiniChart(site, langCode);
-  } else {
-    // 트렌드 차트 업데이트
-    renderTrendChart(site, langCode);
-  }
-}
-
-// ── 대시보드 구조 생성 ────────────────────────────
-
-function buildDashboard() {
-  // Sites grid
-  const sitesGrid = document.getElementById('sitesGrid');
-  sitesGrid.innerHTML = '';
-  CONFIG.SITES.forEach(site => {
-    activeLang[site.id] = 'all';
-    sitesGrid.appendChild(buildSiteCard(site));
-  });
-
-  // Trend grid
-  const trendGrid = document.getElementById('trendGrid');
-  trendGrid.innerHTML = '';
-  CONFIG.SITES.forEach(site => trendGrid.appendChild(buildTrendCard(site)));
-
-  // Language compare grid
-  const langCompareGrid = document.getElementById('langCompareGrid');
-  langCompareGrid.innerHTML = '';
-  CONFIG.SITES.forEach(site => langCompareGrid.appendChild(buildLangCompareCard(site)));
-}
-
-// ── 데이터 로드 ──────────────────────────────────
-
-async function loadSite(site) {
-  if (site.propertyId.includes('YOUR_')) {
-    setSiteError(site, 'config.js에서 Property ID를 설정해 주세요.');
-    return;
-  }
-
-  siteData[site.id] = {};
-  let allError = null;
-
-  // 모든 언어 병렬 로드
-  await Promise.all(site.languages.map(async lang => {
-    try {
-      const report = await runReport(site.propertyId, currentDays, site.filterField, lang.filterValue);
-      siteData[site.id][lang.code] = parseReport(report);
-    } catch (err) {
-      console.error(`[${site.name}/${lang.label}]`, err);
-      siteData[site.id][lang.code] = null;
-      if (lang.code === 'all') allError = err.message;
+  document.getElementById('refreshBtn').addEventListener('click', () => {
+    if (accessToken) {
+      applyMonthPicker();
+      loadAllSites();
     }
-  }));
+  });
 
-  // 로드 완료 후 UI 갱신 ('all' 탭 기준으로 초기 렌더)
-  const allData = siteData[site.id]['all'];
-  if (allData) {
-    setSiteLoaded(site);
-    const metricsEl = document.getElementById(`metrics-${site.id}`);
-    if (metricsEl) metricsEl.innerHTML = metricsHTML(allData.totals, site.color);
-    renderMiniChart(site, 'all');
-    renderTrendChart(site, 'all');
-  } else {
-    setSiteError(site, allError || '데이터를 불러오지 못했습니다.');
-  }
-  renderLangCompareChart(site);
-}
-
-async function loadAll() {
-  buildDashboard();
-  destroyAllCharts();
-
-  // 4개 사이트 병렬 로드
-  await Promise.all(CONFIG.SITES.map(loadSite));
-
-  renderOverviewCompareCharts();
-  setLastUpdated();
-}
-
-// ── 이벤트 위임 (언어 탭 클릭) ──────────────────
-
-document.addEventListener('click', e => {
-  const btn = e.target.closest('.lang-tab');
-  if (!btn) return;
-  const { site, lang } = btn.dataset;
-  // 카드 탭인지 트렌드 탭인지 구분
-  const isCard = !!btn.closest(`#tabs-${site}`);
-  switchLang(site, lang, isCard);
+  document.getElementById('monthPicker').addEventListener('change', () => {
+    applyMonthPicker();
+    if (accessToken) loadAllSites();
+  });
 });
 
-// ── 헤더 버튼 ────────────────────────────────────
-
-document.getElementById('loginBtn').addEventListener('click', login);
-document.getElementById('loginBtnMain').addEventListener('click', login);
-document.getElementById('logoutBtn').addEventListener('click', logout);
-document.getElementById('refreshBtn').addEventListener('click', () => {
-  if (accessToken) loadAll();
-});
-document.getElementById('dateRange').addEventListener('change', function () {
-  currentDays = Number(this.value);
-  if (accessToken) loadAll();
-});
-
-// ── 초기화 ───────────────────────────────────────
+// ── Init ──────────────────────────────────────────
 
 window.addEventListener('load', () => {
   initAuth();
