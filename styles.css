@@ -421,6 +421,13 @@ header {
   color: #E5E7EB;
 }
 
+.site-header-bar .prop-id-badge {
+  font-size: 10px;
+  font-weight: 400;
+  color: #6B7280;
+  letter-spacing: 0;
+}
+
 /* ── Site Overview Row ── */
 .site-overview-row {
   display: grid;

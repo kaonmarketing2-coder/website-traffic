@@ -274,6 +274,23 @@ async function fetchTopCountries(site) {
 // ── Parsing ───────────────────────────────────────
 
 function parseTotals(report, rangeIndex) {
+  // 2개 dateRange + 무차원 요청 시 GA4가 dateRange 차원을 자동 추가하므로
+  // totals 배열 순서에 의존하지 않고 rows에서 date_range_N 값으로 매칭한다
+  const dimHeaders = report?.dimensionHeaders || [];
+  const drIdx = dimHeaders.findIndex(h => h.name === 'dateRange');
+  if (drIdx !== -1) {
+    const row = (report.rows || []).find(
+      r => r.dimensionValues?.[drIdx]?.value === `date_range_${rangeIndex}`
+    );
+    if (row) {
+      return {
+        pageviews: Number(row.metricValues?.[0]?.value || 0),
+        users: Number(row.metricValues?.[1]?.value || 0),
+      };
+    }
+    // 해당 기간 데이터 없음 (행 자체가 누락됨)
+    return { pageviews: 0, users: 0 };
+  }
   const totals = report?.totals?.[rangeIndex]?.metricValues || [];
   return {
     pageviews: Number(totals[0]?.value || 0),
@@ -637,6 +654,7 @@ function renderSiteSection(site) {
       <div class="site-header-bar">
         ${site.name}
         <a href="${site.url}" target="_blank" rel="noopener">${site.url}</a>
+        <span class="prop-id-badge">속성 ID: ${site.propertyId}</span>
       </div>
       ${overviewRow}
       ${langSection}
