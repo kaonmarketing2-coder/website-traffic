@@ -15,7 +15,7 @@
 // =====================================================
 
 const CONFIG = {
-  OAUTH_CLIENT_ID: '919853705858-her60qjibp2lgpepmjcchecf9k909oab.apps.googleusercontent.com',
+  OAUTH_CLIENT_ID: '1056993809600-1p185717l196vlrar1vo4llpao4t5us0.apps.googleusercontent.com',
 
   SITES: [
     {
