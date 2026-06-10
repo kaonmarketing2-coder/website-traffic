@@ -99,6 +99,34 @@ function applyMonthPicker() {
   if (title) title.textContent = `Monthly Web Analytics Overview: ${fmtMonthLabel(y, m)}`;
 }
 
+// ── Site Property Helpers ─────────────────────────
+
+// Returns list of property IDs that together cover the whole site
+function getSitePropertyList(site) {
+  const perLang = site.languages.filter(l => l.code !== 'all' && l.propertyId);
+  if (perLang.length > 0) return [...new Set(perLang.map(l => l.propertyId))];
+  return site.propertyId ? [site.propertyId] : [];
+}
+
+// Returns {propId, filter} for a specific language entry
+function getLangQuery(site, lang) {
+  if (lang.propertyId) return { propId: lang.propertyId, filter: undefined };
+  return {
+    propId: site.propertyId,
+    filter: lang.filterValue ? containsFilter(site.filterField, lang.filterValue) : undefined,
+  };
+}
+
+// Build a virtual GA4 report compatible with parseTotals (uses totals[] path)
+function buildVirtualReport(curr, prev) {
+  return {
+    totals: [
+      { metricValues: [{ value: String(curr.pageviews) }, { value: String(curr.users) }] },
+      { metricValues: [{ value: String(prev.pageviews) }, { value: String(prev.users) }] },
+    ],
+  };
+}
+
 // ── GA4 API ───────────────────────────────────────
 
 async function runReport(propertyId, { dateRanges, metrics, dimensions, dimensionFilter, orderBys, limit }) {
@@ -150,13 +178,22 @@ async function fetchSummary(site) {
   const { startDate: cs, endDate: ce } = getMonthRange(selectedYear, selectedMonth);
   const prev = getPrevMonth(selectedYear, selectedMonth);
   const { startDate: ps, endDate: pe } = getMonthRange(prev.y, prev.m);
-  return runReport(site.propertyId, {
-    dateRanges: [
-      { startDate: cs, endDate: ce },
-      { startDate: ps, endDate: pe },
-    ],
-    metrics: ['screenPageViews', 'totalUsers'],
-  });
+  const dateRanges = [{ startDate: cs, endDate: ce }, { startDate: ps, endDate: pe }];
+  const propIds = getSitePropertyList(site);
+  if (propIds.length === 1) {
+    return runReport(propIds[0], { dateRanges, metrics: ['screenPageViews', 'totalUsers'] });
+  }
+  // Multi-property: fetch each language property and sum totals
+  const reports = await Promise.all(propIds.map(pid =>
+    runReport(pid, { dateRanges, metrics: ['screenPageViews', 'totalUsers'] }).catch(() => null)
+  ));
+  let pv0 = 0, uv0 = 0, pv1 = 0, uv1 = 0;
+  for (const r of reports) {
+    if (!r) continue;
+    const c = parseTotals(r, 0); const p = parseTotals(r, 1);
+    pv0 += c.pageviews; uv0 += c.users; pv1 += p.pageviews; uv1 += p.users;
+  }
+  return buildVirtualReport({ pageviews: pv0, users: uv0 }, { pageviews: pv1, users: uv1 });
 }
 
 // Current month + same month last year
@@ -164,24 +201,53 @@ async function fetchYoY(site) {
   const { startDate: cs, endDate: ce } = getMonthRange(selectedYear, selectedMonth);
   const yoy = getYoYMonth(selectedYear, selectedMonth);
   const { startDate: ys, endDate: ye } = getMonthRange(yoy.y, yoy.m);
-  return runReport(site.propertyId, {
-    dateRanges: [
-      { startDate: cs, endDate: ce },
-      { startDate: ys, endDate: ye },
-    ],
-    metrics: ['screenPageViews', 'totalUsers'],
-  });
+  const dateRanges = [{ startDate: cs, endDate: ce }, { startDate: ys, endDate: ye }];
+  const propIds = getSitePropertyList(site);
+  if (propIds.length === 1) {
+    return runReport(propIds[0], { dateRanges, metrics: ['screenPageViews', 'totalUsers'] });
+  }
+  const reports = await Promise.all(propIds.map(pid =>
+    runReport(pid, { dateRanges, metrics: ['screenPageViews', 'totalUsers'] }).catch(() => null)
+  ));
+  let pv0 = 0, uv0 = 0, pv1 = 0, uv1 = 0;
+  for (const r of reports) {
+    if (!r) continue;
+    const c = parseTotals(r, 0); const p = parseTotals(r, 1);
+    pv0 += c.pageviews; uv0 += c.users; pv1 += p.pageviews; uv1 += p.users;
+  }
+  return buildVirtualReport({ pageviews: pv0, users: uv0 }, { pageviews: pv1, users: uv1 });
 }
 
 // Jan 1 of selected year → end of selected month, grouped by yearMonth
 async function fetchTrend(site) {
   const { endDate } = getMonthRange(selectedYear, selectedMonth);
-  return runReport(site.propertyId, {
-    dateRanges: [{ startDate: `${selectedYear}-01-01`, endDate }],
-    metrics: ['screenPageViews', 'totalUsers'],
-    dimensions: ['yearMonth'],
-    orderBys: [{ dimension: { dimensionName: 'yearMonth' }, desc: false }],
-  });
+  const dateRanges = [{ startDate: `${selectedYear}-01-01`, endDate }];
+  const propIds = getSitePropertyList(site);
+  const reports = await Promise.all(propIds.map(pid =>
+    runReport(pid, {
+      dateRanges,
+      metrics: ['screenPageViews', 'totalUsers'],
+      dimensions: ['yearMonth'],
+      orderBys: [{ dimension: { dimensionName: 'yearMonth' }, desc: false }],
+    }).catch(() => null)
+  ));
+  // Merge rows by yearMonth
+  const merged = {};
+  for (const r of reports) {
+    if (!r) continue;
+    for (const row of (r.rows || [])) {
+      const m = row.dimensionValues[0].value;
+      if (!merged[m]) merged[m] = { pageviews: 0, users: 0 };
+      merged[m].pageviews += Number(row.metricValues[0].value || 0);
+      merged[m].users    += Number(row.metricValues[1].value || 0);
+    }
+  }
+  return {
+    rows: Object.keys(merged).sort().map(m => ({
+      dimensionValues: [{ value: m }],
+      metricValues: [{ value: String(merged[m].pageviews) }, { value: String(merged[m].users) }],
+    })),
+  };
 }
 
 // Per-language totals for current month + previous month
@@ -195,15 +261,14 @@ async function fetchLangs(site) {
 
   await Promise.all(nonAll.map(async lang => {
     try {
-      const report = await runReport(site.propertyId, {
+      const { propId, filter } = getLangQuery(site, lang);
+      const report = await runReport(propId, {
         dateRanges: [
           { startDate: cs, endDate: ce },
           { startDate: ps, endDate: pe },
         ],
         metrics: ['screenPageViews', 'totalUsers'],
-        dimensionFilter: lang.filterValue
-          ? containsFilter(site.filterField, lang.filterValue)
-          : undefined,
+        dimensionFilter: filter,
       });
       results[lang.code] = report;
     } catch (err) {
@@ -219,11 +284,11 @@ async function fetchLangs(site) {
 async function fetchTopPages(site) {
   const { startDate, endDate } = getMonthRange(selectedYear, selectedMonth);
   const lang = site.languages.find(l => l.code === site.topPagesLang);
-  const filter = (lang && lang.filterValue)
-    ? containsFilter(site.filterField, lang.filterValue)
-    : undefined;
+  const { propId, filter } = lang
+    ? getLangQuery(site, lang)
+    : { propId: getSitePropertyList(site)[0], filter: undefined };
 
-  return runReport(site.propertyId, {
+  return runReport(propId, {
     dateRanges: [{ startDate, endDate }],
     metrics: ['screenPageViews'],
     dimensions: ['pagePath'],
@@ -239,11 +304,11 @@ async function fetchPrevTopPages(site, paths) {
   const prev = getPrevMonth(selectedYear, selectedMonth);
   const { startDate, endDate } = getMonthRange(prev.y, prev.m);
   const lang = site.languages.find(l => l.code === site.topPagesLang);
-  const filter = (lang && lang.filterValue)
-    ? containsFilter(site.filterField, lang.filterValue)
-    : undefined;
+  const { propId, filter } = lang
+    ? getLangQuery(site, lang)
+    : { propId: getSitePropertyList(site)[0], filter: undefined };
 
-  return runReport(site.propertyId, {
+  return runReport(propId, {
     dateRanges: [{ startDate, endDate }],
     metrics: ['screenPageViews'],
     dimensions: ['pagePath'],
@@ -253,15 +318,15 @@ async function fetchPrevTopPages(site, paths) {
   });
 }
 
-// Top countries for selected month (English filtered)
+// Top countries for selected month (English property)
 async function fetchTopCountries(site) {
   const { startDate, endDate } = getMonthRange(selectedYear, selectedMonth);
   const enLang = site.languages.find(l => l.code === 'en');
-  const filter = (enLang && enLang.filterValue)
-    ? containsFilter(site.filterField, enLang.filterValue)
-    : undefined;
+  const { propId, filter } = enLang
+    ? getLangQuery(site, enLang)
+    : { propId: getSitePropertyList(site)[0], filter: undefined };
 
-  return runReport(site.propertyId, {
+  return runReport(propId, {
     dateRanges: [{ startDate, endDate }],
     metrics: ['totalUsers'],
     dimensions: ['country'],
@@ -654,7 +719,6 @@ function renderSiteSection(site) {
       <div class="site-header-bar">
         ${site.name}
         <a href="${site.url}" target="_blank" rel="noopener">${site.url}</a>
-        <span class="prop-id-badge">속성 ID: ${site.propertyId}</span>
       </div>
       ${overviewRow}
       ${langSection}
