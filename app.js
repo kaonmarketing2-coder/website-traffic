@@ -543,6 +543,7 @@ async function loadSite(site) {
   }
 
   siteData[site.id] = {};
+  let allError = null;
 
   // 모든 언어 병렬 로드
   await Promise.all(site.languages.map(async lang => {
@@ -552,6 +553,7 @@ async function loadSite(site) {
     } catch (err) {
       console.error(`[${site.name}/${lang.label}]`, err);
       siteData[site.id][lang.code] = null;
+      if (lang.code === 'all') allError = err.message;
     }
   }));
 
@@ -564,7 +566,7 @@ async function loadSite(site) {
     renderMiniChart(site, 'all');
     renderTrendChart(site, 'all');
   } else {
-    setSiteError(site, '데이터를 불러오지 못했습니다.');
+    setSiteError(site, allError || '데이터를 불러오지 못했습니다.');
   }
   renderLangCompareChart(site);
 }
