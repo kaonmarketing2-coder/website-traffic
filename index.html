@@ -103,7 +103,7 @@
     ⚠️ <strong>설정 필요:</strong> <code>config.js</code>에서 <code>OAUTH_CLIENT_ID</code>와 각 사이트의 <code>propertyId</code>를 실제 값으로 변경해 주세요.
   </div>
 
-  <!-- Sites overview -->
+  <!-- ① 사이트별 트래픽 요약 (언어 탭 포함) -->
   <section>
     <div class="section-header">
       <h2>사이트별 트래픽 요약</h2>
@@ -112,7 +112,7 @@
     <div class="sites-grid" id="sitesGrid"></div>
   </section>
 
-  <!-- Trend charts -->
+  <!-- ② 일별 트래픽 추이 (언어 탭으로 전환 가능) -->
   <section class="trend-section">
     <div class="section-header">
       <h2>일별 트래픽 추이</h2>
@@ -120,22 +120,30 @@
     <div class="trend-grid" id="trendGrid"></div>
   </section>
 
-  <!-- Comparison charts -->
-  <section class="compare-section">
+  <!-- ③ 언어별 세션/사용자 비교 (사이트별) -->
+  <section class="lang-compare-section">
     <div class="section-header">
-      <h2>사이트 비교</h2>
+      <h2>언어 버전별 비교</h2>
     </div>
-    <div class="compare-grid">
+    <div class="lang-compare-grid" id="langCompareGrid"></div>
+  </section>
+
+  <!-- ④ 4개 사이트 전체 비교 -->
+  <section class="overview-section">
+    <div class="section-header">
+      <h2>사이트 간 전체 비교</h2>
+    </div>
+    <div class="overview-grid">
       <div class="chart-card">
-        <h3>세션 수 비교</h3>
+        <h3>세션 수</h3>
         <div class="chart-wrap">
-          <canvas id="sessionsCompareChart"></canvas>
+          <canvas id="overviewSessionsChart"></canvas>
         </div>
       </div>
       <div class="chart-card">
-        <h3>사용자 수 비교</h3>
+        <h3>사용자 수</h3>
         <div class="chart-wrap">
-          <canvas id="usersCompareChart"></canvas>
+          <canvas id="overviewUsersChart"></canvas>
         </div>
       </div>
     </div>

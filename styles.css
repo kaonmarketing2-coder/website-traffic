@@ -253,9 +253,7 @@ select#dateRange option {
 }
 
 @media (max-width: 900px) {
-  .sites-grid {
-    grid-template-columns: 1fr;
-  }
+  .sites-grid { grid-template-columns: 1fr; }
 }
 
 .site-card {
@@ -275,7 +273,61 @@ select#dateRange option {
   display: flex;
   align-items: flex-start;
   justify-content: space-between;
-  margin-bottom: 20px;
+  margin-bottom: 14px;
+}
+
+/* ── Language Tabs ── */
+.lang-tabs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-bottom: 16px;
+}
+
+.lang-tab {
+  padding: 4px 12px;
+  border-radius: 20px;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  border: 1.5px solid var(--border);
+  background: transparent;
+  color: var(--text-muted);
+  transition: all 0.15s;
+  white-space: nowrap;
+}
+
+.lang-tab:hover {
+  border-color: var(--site-color);
+  color: var(--site-color);
+  background: color-mix(in srgb, var(--site-color) 6%, transparent);
+}
+
+.lang-tab.active {
+  background: var(--site-color);
+  border-color: var(--site-color);
+  color: #fff;
+}
+
+.lang-tabs-sm .lang-tab {
+  padding: 3px 10px;
+  font-size: 11px;
+}
+
+/* Trend card header with tabs */
+.trend-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 14px;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.trend-header h3 {
+  font-size: 14px;
+  font-weight: 700;
+  white-space: nowrap;
 }
 
 .site-card-title h3 {
@@ -367,21 +419,25 @@ select#dateRange option {
   position: relative;
 }
 
-/* ── Trend Section ── */
-.trend-section {
+/* ── Sections ── */
+.trend-section,
+.lang-compare-section,
+.overview-section {
   margin-bottom: 32px;
 }
 
-.trend-grid {
+.trend-grid,
+.lang-compare-grid,
+.overview-grid {
   display: grid;
   grid-template-columns: repeat(2, 1fr);
   gap: 20px;
 }
 
 @media (max-width: 900px) {
-  .trend-grid {
-    grid-template-columns: 1fr;
-  }
+  .trend-grid,
+  .lang-compare-grid,
+  .overview-grid { grid-template-columns: 1fr; }
 }
 
 .chart-card {
@@ -395,7 +451,7 @@ select#dateRange option {
   font-size: 14px;
   font-weight: 700;
   color: var(--text);
-  margin-bottom: 16px;
+  margin-bottom: 12px;
 }
 
 .chart-wrap {
@@ -403,21 +459,8 @@ select#dateRange option {
   position: relative;
 }
 
-/* ── Comparison Section ── */
-.compare-section {
-  margin-bottom: 32px;
-}
-
-.compare-grid {
-  display: grid;
-  grid-template-columns: repeat(2, 1fr);
-  gap: 20px;
-}
-
-@media (max-width: 900px) {
-  .compare-grid {
-    grid-template-columns: 1fr;
-  }
+.chart-wrap-md {
+  height: 180px;
 }
 
 /* ── Skeleton loader ── */
