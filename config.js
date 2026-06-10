@@ -13,14 +13,14 @@
 // =====================================================
 
 const CONFIG = {
-  OAUTH_CLIENT_ID: 'YOUR_OAUTH_CLIENT_ID.apps.googleusercontent.com',
+  OAUTH_CLIENT_ID: 'Y919853705858-her60qjibp2lgpepmjcchecf9k909oab.apps.googleusercontent.com',
 
   SITES: [
     {
       id: 'kaon-group',
       name: 'Kaon Group',
       url: 'https://www.kaongroup.com/en/',
-      propertyId: 'YOUR_PROPERTY_ID_1',
+      propertyId: '348541450',
       color: '#0066CC',
       bgColor: 'rgba(0, 102, 204, 0.08)',
     },
@@ -28,7 +28,7 @@ const CONFIG = {
       id: 'kaon-broadband',
       name: 'Kaon Broadband',
       url: 'https://www.kaonbroadband.com/',
-      propertyId: 'YOUR_PROPERTY_ID_2',
+      propertyId: '312829365',
       color: '#00A86B',
       bgColor: 'rgba(0, 168, 107, 0.08)',
     },
@@ -36,7 +36,7 @@ const CONFIG = {
       id: 'kaon-robotics',
       name: 'Kaon Robotics',
       url: 'https://www.kaonrobotics.com/',
-      propertyId: 'YOUR_PROPERTY_ID_3',
+      propertyId: '312814212',
       color: '#FF6B35',
       bgColor: 'rgba(255, 107, 53, 0.08)',
     },
@@ -44,7 +44,7 @@ const CONFIG = {
       id: 'kaon-media',
       name: 'Kaon Media',
       url: 'https://www.kaonmedia.co.kr/',
-      propertyId: 'YOUR_PROPERTY_ID_4',
+      propertyId: '312799776',
       color: '#7B2FBE',
       bgColor: 'rgba(123, 47, 190, 0.08)',
     },
