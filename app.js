@@ -157,7 +157,7 @@ function handleAuthExpired() {
 function login() {
   if (!tokenClient) { alert('Google 라이브러리 로딩 중입니다. 잠시 후 다시 시도해 주세요.'); return; }
   if (CONFIG.OAUTH_CLIENT_ID.includes('YOUR_')) { alert('config.js에서 OAUTH_CLIENT_ID를 설정해 주세요.'); return; }
-  tokenClient.requestAccessToken({ prompt: '' });
+  tokenClient.requestAccessToken({ prompt: 'consent' });
 }
 
 function logout() {
