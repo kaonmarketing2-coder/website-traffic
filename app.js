@@ -94,10 +94,10 @@ async function runReport(propertyId, days, filterField, filterValue) {
   });
 
   if (res.status === 401) { handleAuthExpired(); throw new Error('인증 만료'); }
-  if (res.status === 403) throw new Error('접근 권한 없음 (GA4 속성에 뷰어 권한을 추가해 주세요)');
   if (!res.ok) {
-    const err = await res.json().catch(() => ({}));
-    throw new Error(err?.error?.message || `API 오류 (${res.status})`);
+    const body = await res.json().catch(() => ({}));
+    const msg = body?.error?.message || body?.error?.status || `HTTP ${res.status}`;
+    throw new Error(`[${res.status}] ${msg}`);
   }
   return res.json();
 }
