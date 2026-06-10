@@ -141,6 +141,12 @@ function initAuth() {
 function onAuthSuccess(resp) {
   if (resp.error) { onAuthError(resp); return; }
   accessToken = resp.access_token;
+  // 발급된 scope 확인 (콘솔 F12에서 확인 가능)
+  console.log('[Auth] granted scope:', resp.scope);
+  if (!resp.scope || !resp.scope.includes('analytics')) {
+    alert('⚠️ Google Analytics 권한이 포함되지 않았습니다.\n\nGoogle Cloud Console → OAuth 동의 화면 → 범위 추가에서\n"analytics.readonly" 범위를 추가한 후 다시 시도해 주세요.');
+    return;
+  }
   showDashboard();
   loadAll();
 }
