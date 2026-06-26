@@ -7,6 +7,9 @@
   <link rel="stylesheet" href="styles.css" />
   <!-- Chart.js -->
   <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.4/dist/chart.umd.min.js"></script>
+  <!-- PDF 보고서 생성 (html2canvas + jsPDF) -->
+  <script src="https://cdn.jsdelivr.net/npm/html2canvas@1.4.1/dist/html2canvas.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/jspdf@2.5.1/dist/jspdf.umd.min.js"></script>
   <!-- Google Identity Services -->
   <script src="https://accounts.google.com/gsi/client" async defer></script>
 </head>
@@ -33,6 +36,12 @@
           <path d="M3.51 9a9 9 0 0114.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0020.49 15"/>
         </svg>
         새로고침
+      </button>
+      <button id="reportBtn" class="btn btn-report" title="PDF 보고서 다운로드">
+        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/>
+        </svg>
+        보고서 다운로드
       </button>
       <button id="logoutBtn" class="btn btn-outline">로그아웃</button>
     </div>
@@ -133,6 +142,15 @@
 <footer>
   KAON Group Corp. | Copyright &copy; <span id="footerYear"></span> KAON Group Co., Ltd.
 </footer>
+
+<!-- ── PDF 생성 진행 오버레이 ── -->
+<div id="reportOverlay" class="report-overlay" style="display:none">
+  <div class="report-overlay-box">
+    <div class="loading-spinner"></div>
+    <div class="report-overlay-text">보고서를 생성하는 중입니다…</div>
+    <div id="reportProgress" class="report-overlay-progress"></div>
+  </div>
+</div>
 
 <script src="config.js"></script>
 <script src="app.js"></script>

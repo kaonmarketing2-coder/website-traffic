@@ -120,6 +120,62 @@ header {
   color: #E87722;
 }
 
+.btn-report {
+  background: #E87722;
+  color: #fff;
+  border: 1px solid #E87722;
+}
+
+.btn-report:hover {
+  background: #D9690F;
+  border-color: #D9690F;
+}
+
+.btn-report:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+
+/* ── PDF 생성 오버레이 ── */
+.report-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(17, 24, 39, 0.55);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 9999;
+}
+
+.report-overlay-box {
+  background: #fff;
+  border-radius: 10px;
+  padding: 32px 44px;
+  text-align: center;
+  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.3);
+  min-width: 280px;
+}
+
+.report-overlay-text {
+  margin-top: 14px;
+  font-size: 15px;
+  font-weight: 600;
+  color: #1F2937;
+}
+
+.report-overlay-progress {
+  margin-top: 6px;
+  font-size: 13px;
+  color: #6B7280;
+}
+
+/* PDF 캡처용 오프스크린 슬라이드 컨테이너 */
+.pdf-slide {
+  width: 1280px;
+  background: #fff;
+  box-sizing: border-box;
+}
+
 /* ── Login Screen ── */
 #loginScreen {
   display: flex;

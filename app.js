@@ -39,6 +39,14 @@ function fmtMonthLabel(y, m) {
   return `${y}년 ${m}월`;
 }
 
+const EN_MONTHS = ['January', 'February', 'March', 'April', 'May', 'June',
+  'July', 'August', 'September', 'October', 'November', 'December'];
+
+// (2026, 5) → "May 2026"
+function fmtMonthLabelEn(y, m) {
+  return `${EN_MONTHS[m - 1]} ${y}`;
+}
+
 // "202601" → "1월"
 function fmtYearMonth(yyyymm) {
   const s = String(yyyymm);
@@ -1013,6 +1021,179 @@ async function loadOneSite(site) {
   }
 }
 
+// ── PDF 보고서 생성 ───────────────────────────────
+
+// 캡처용 슬라이드 픽셀 폭 (16:9 → 1280 x 720)
+const PDF_SLIDE_W = 1280;
+const PDF_SLIDE_H = 720;
+
+function setReportProgress(text) {
+  const el = document.getElementById('reportProgress');
+  if (el) el.textContent = text;
+}
+
+// 공통 슬라이드 헤더 (제목 + 주황 밑줄)
+function slideHeaderHTML(title) {
+  return `
+    <div style="padding:40px 56px 0 56px">
+      <div style="font-size:30px;font-weight:700;color:#1F2937;letter-spacing:-0.01em">${title}</div>
+      <div style="height:4px;background:#E87722;margin-top:14px;border-radius:2px"></div>
+    </div>`;
+}
+
+// 공통 슬라이드 푸터
+function slideFooterHTML() {
+  const yr = selectedYear || new Date().getFullYear();
+  return `
+    <div style="position:absolute;left:56px;right:56px;bottom:22px;display:flex;
+                justify-content:space-between;align-items:center;
+                font-size:12px;color:#9CA3AF;border-top:1px solid #F0F0F0;padding-top:10px">
+      <span><span style="color:#E87722">● ● ●</span>&nbsp; KAON Group Corp.</span>
+      <span>Copyright &copy; ${yr} KAON Group Co., Ltd. All rights reserved &nbsp;|&nbsp; Confidential</span>
+    </div>`;
+}
+
+const KAON_LOGO_SVG = `
+  <svg viewBox="0 0 108 34" xmlns="http://www.w3.org/2000/svg" style="height:54px">
+    <text x="0" y="28" font-family="Arial,sans-serif" font-size="30" font-weight="900" fill="#1A1A1A">KA</text>
+    <circle cx="71" cy="17" r="13" fill="#E87722"/>
+    <path d="M71 8v7" stroke="white" stroke-width="2.5" stroke-linecap="round"/>
+    <path d="M65.5 12.5 A8.5 8.5 0 1 0 76.5 12.5" fill="none" stroke="white" stroke-width="2.2" stroke-linecap="round"/>
+    <text x="86" y="28" font-family="Arial,sans-serif" font-size="30" font-weight="900" fill="#1A1A1A">N</text>
+  </svg>`;
+
+// 오프스크린에 슬라이드 DOM을 만들어 html2canvas로 캡처 후 제거
+async function captureSlideHTML(innerHTML, { height = PDF_SLIDE_H } = {}) {
+  const slide = document.createElement('div');
+  slide.style.cssText =
+    `position:fixed;left:-99999px;top:0;width:${PDF_SLIDE_W}px;height:${height}px;` +
+    `background:#fff;box-sizing:border-box;font-family:'Noto Sans KR',sans-serif;overflow:hidden`;
+  slide.innerHTML = innerHTML;
+  document.body.appendChild(slide);
+  try {
+    return await html2canvas(slide, { scale: 2, backgroundColor: '#fff', logging: false, useCORS: true });
+  } finally {
+    slide.remove();
+  }
+}
+
+// 화면에 렌더된 실제 요소를 캡처
+async function captureElement(el) {
+  return html2canvas(el, { scale: 2, backgroundColor: '#fff', logging: false, useCORS: true });
+}
+
+// 캔버스를 PDF 한 페이지(가로 16:9)에 꽉 차게(여백 포함) 배치
+function addCanvasPage(pdf, canvas, isFirst) {
+  const pageW = pdf.internal.pageSize.getWidth();
+  const pageH = pdf.internal.pageSize.getHeight();
+  if (!isFirst) pdf.addPage();
+
+  const margin = 0;
+  const availW = pageW - margin * 2;
+  const availH = pageH - margin * 2;
+  const ratio = Math.min(availW / canvas.width, availH / canvas.height);
+  const w = canvas.width * ratio;
+  const h = canvas.height * ratio;
+  const x = (pageW - w) / 2;
+  const y = (pageH - h) / 2;
+  pdf.addImage(canvas.toDataURL('image/jpeg', 0.92), 'JPEG', x, y, w, h);
+}
+
+async function generateReport() {
+  if (!accessToken) { alert('먼저 로그인해 주세요.'); return; }
+
+  const btn = document.getElementById('reportBtn');
+  const overlay = document.getElementById('reportOverlay');
+  btn.disabled = true;
+  overlay.style.display = 'flex';
+  setReportProgress('데이터 준비 중…');
+
+  try {
+    // 데이터가 아직 없으면 로드
+    const anyLoaded = CONFIG.SITES.some(s => cache[s.id] && cache[s.id].summary);
+    if (!anyLoaded) {
+      await loadAllSites();
+    }
+    // 차트 애니메이션이 끝나도록 잠시 대기
+    await new Promise(r => setTimeout(r, 400));
+
+    const { jsPDF } = window.jspdf;
+    // PPT와 동일한 16:9 비율 (pt 단위 960 x 540)
+    const pdf = new jsPDF({ orientation: 'landscape', unit: 'pt', format: [960, 540] });
+
+    const mEn = fmtMonthLabelEn(selectedYear, selectedMonth);
+    let first = true;
+
+    // ── 1) 표지 ──
+    setReportProgress('표지 생성 중…');
+    const coverCanvas = await captureSlideHTML(`
+      <div style="position:relative;width:100%;height:100%;
+                  background:linear-gradient(135deg,#fff 60%,#FDF4EC 100%)">
+        <div style="position:absolute;top:70px;left:64px">${KAON_LOGO_SVG}</div>
+        <div style="position:absolute;top:230px;left:64px">
+          <div style="font-size:64px;font-weight:700;color:#1F2937;line-height:1.15">
+            Website Monthly Traffic<br>Report &nbsp;- ${mEn}
+          </div>
+          <div style="margin-top:24px;font-size:24px;color:#9CA3AF">Marketing Team</div>
+        </div>
+        <div style="position:absolute;right:64px;bottom:60px;text-align:right">
+          <div style="font-size:18px;font-weight:700;letter-spacing:0.15em;color:#E87722">CONNECTED +</div>
+          <div style="margin-top:8px;font-size:11px;color:#9CA3AF">
+            Copyright &copy; ${selectedYear} KAON Group Co., Ltd. All rights reserved &nbsp;|&nbsp; Confidential
+          </div>
+        </div>
+      </div>`);
+    addCanvasPage(pdf, coverCanvas, first); first = false;
+
+    // ── 2) Web Analytics Overview ──
+    setReportProgress('전체 개요 슬라이드 캡처 중…');
+    const overviewEl = document.querySelector('.report-section');
+    if (overviewEl) {
+      const c = await captureElement(overviewEl);
+      addCanvasPage(pdf, c, first); first = false;
+    }
+
+    // ── 3) 사이트별 상세 ──
+    const sites = CONFIG.SITES;
+    for (let i = 0; i < sites.length; i++) {
+      const site = sites[i];
+      setReportProgress(`${site.name} 슬라이드 캡처 중… (${i + 1}/${sites.length})`);
+      const el = document.getElementById(`detail-${site.id}`);
+      if (el) {
+        const c = await captureElement(el);
+        addCanvasPage(pdf, c, first); first = false;
+      }
+    }
+
+    // ── 4) Thank You ──
+    setReportProgress('마무리 슬라이드 생성 중…');
+    const thanksCanvas = await captureSlideHTML(`
+      <div style="position:relative;width:100%;height:100%;
+                  background:linear-gradient(135deg,#fff 55%,#FDF4EC 100%);
+                  display:flex;flex-direction:column;align-items:center;justify-content:center">
+        <div style="margin-bottom:8px">${KAON_LOGO_SVG}</div>
+        <div style="font-size:56px;font-weight:300;color:#9CA3AF;letter-spacing:0.04em">THANK YOU</div>
+        <div style="position:absolute;right:64px;bottom:60px;text-align:right">
+          <div style="font-size:18px;font-weight:700;letter-spacing:0.15em;color:#E87722">CONNECTED +</div>
+          <div style="margin-top:8px;font-size:11px;color:#9CA3AF">
+            Copyright &copy; ${selectedYear} KAON Group Co., Ltd. All rights reserved &nbsp;|&nbsp; Confidential
+          </div>
+        </div>
+      </div>`);
+    addCanvasPage(pdf, thanksCanvas, first);
+
+    setReportProgress('PDF 저장 중…');
+    const fname = `KAON_Website_Traffic_Report_${selectedYear}_${String(selectedMonth).padStart(2, '0')}.pdf`;
+    pdf.save(fname);
+  } catch (err) {
+    console.error('[Report] 생성 실패:', err);
+    alert('보고서 생성 중 오류가 발생했습니다.\n' + (err.message || err));
+  } finally {
+    overlay.style.display = 'none';
+    btn.disabled = false;
+  }
+}
+
 // ── Auth ──────────────────────────────────────────
 
 const TOKEN_STORAGE_KEY = 'kaon_ga_token';
@@ -1128,6 +1309,8 @@ document.addEventListener('DOMContentLoaded', () => {
       loadAllSites();
     }
   });
+
+  document.getElementById('reportBtn').addEventListener('click', generateReport);
 
   document.getElementById('monthPicker').addEventListener('change', () => {
     applyMonthPicker();
