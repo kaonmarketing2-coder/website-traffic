@@ -1099,6 +1099,47 @@ function addCanvasPage(pdf, canvas, isFirst) {
   pdf.addImage(canvas.toDataURL('image/jpeg', 0.92), 'JPEG', x, y, w, h);
 }
 
+// 여러 캔버스를 공통 폭으로 맞춰 한 페이지에 세로로 쌓아 배치 (가운데 정렬)
+function addStackedPage(pdf, canvases, isFirst) {
+  const list = canvases.filter(Boolean);
+  if (list.length === 0) return;
+
+  const pageW = pdf.internal.pageSize.getWidth();
+  const pageH = pdf.internal.pageSize.getHeight();
+  if (!isFirst) pdf.addPage();
+
+  const marginX = 30;
+  const marginY = 26;
+  const gap = 10;
+  const availW = pageW - marginX * 2;
+  const availH = pageH - marginY * 2;
+
+  // 모든 캔버스를 동일한 표시 폭(availW)으로 맞췄을 때의 높이 합산
+  const baseHeights = list.map(c => c.height * (availW / c.width));
+  const totalH = baseHeights.reduce((s, h) => s + h, 0) + gap * (list.length - 1);
+
+  // 페이지 높이를 넘으면 전체 축소
+  const s = Math.min(1, availH / totalH);
+  const finalW = availW * s;
+  const x = (pageW - finalW) / 2;
+  let y = (pageH - totalH * s) / 2;
+
+  list.forEach((c, i) => {
+    const h = baseHeights[i] * s;
+    pdf.addImage(c.toDataURL('image/jpeg', 0.92), 'JPEG', x, y, finalW, h);
+    y += h + gap * s;
+  });
+}
+
+// PPT 형식 흰색 제목 띠 (제목 + 주황 밑줄)를 오프스크린으로 캡처
+async function captureTitleStrip(title) {
+  return captureSlideHTML(`
+    <div style="padding:26px 56px 0 56px">
+      <div style="font-size:30px;font-weight:700;color:#1F2937;letter-spacing:-0.01em">${title}</div>
+      <div style="height:4px;background:#E87722;margin-top:12px;border-radius:2px"></div>
+    </div>`, { height: 116 });
+}
+
 async function generateReport() {
   if (!accessToken) { alert('먼저 로그인해 주세요.'); return; }
 
@@ -1153,16 +1194,35 @@ async function generateReport() {
       addCanvasPage(pdf, c, first); first = false;
     }
 
-    // ── 3) 사이트별 상세 ──
+    // ── 3) 사이트별 상세 (사이트당 2페이지) ──
     const sites = CONFIG.SITES;
     for (let i = 0; i < sites.length; i++) {
       const site = sites[i];
       setReportProgress(`${site.name} 슬라이드 캡처 중… (${i + 1}/${sites.length})`);
       const el = document.getElementById(`detail-${site.id}`);
-      if (el) {
-        const c = await captureElement(el);
-        addCanvasPage(pdf, c, first); first = false;
-      }
+      if (!el) continue;
+
+      const headerBar   = el.querySelector('.site-header-bar');
+      const overviewRow = el.querySelector('.site-overview-row');
+      const detailRow   = el.querySelector('.site-detail-row');
+      const topRow      = el.querySelector('.site-top-row');
+
+      // 페이지 A: Web Traffic Overview (KPI + 추이 + 언어 테이블 + 파이)
+      const titleA = await captureTitleStrip(`[${site.name}] Web Traffic Overview: ${mEn}`);
+      const capHeader   = headerBar   ? await captureElement(headerBar)   : null;
+      const capOverview = overviewRow ? await captureElement(overviewRow) : null;
+      const capDetail   = detailRow   ? await captureElement(detailRow)   : null;
+      addStackedPage(pdf, [titleA, capHeader, capOverview, capDetail], first);
+      first = false;
+
+      // 페이지 B: Top Pages (& Countries)
+      const titleBText = site.showCountries
+        ? `[${site.name}] Web Top Pages & Countries: ${mEn}`
+        : `[${site.name}] Web Top Pages: ${mEn}`;
+      const titleB = await captureTitleStrip(titleBText);
+      const capTop = topRow ? await captureElement(topRow) : null;
+      addStackedPage(pdf, [titleB, capTop], first);
+      first = false;
     }
 
     // ── 4) Thank You ──
