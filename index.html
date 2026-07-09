@@ -92,6 +92,15 @@
 <!-- ── Dashboard ── -->
 <main id="dashboard" style="display:none">
 
+  <!-- View Tabs -->
+  <div class="view-tabs" id="viewTabs">
+    <button class="view-tab active" data-view="dashboard">대시보드</button>
+    <button class="view-tab" data-view="insights">인사이트</button>
+  </div>
+
+  <!-- ═══ View 1: Dashboard ═══ -->
+  <div id="dashboardView">
+
   <!-- Section 1: Overview -->
   <div class="report-section">
     <div class="section-title" id="overviewTitle">Monthly Web Analytics Overview</div>
@@ -147,12 +156,6 @@
           <canvas id="channelMixChart"></canvas>
         </div>
       </div>
-      <div class="channel-insights-cell">
-        <div class="subsection-title">자동 인사이트 <span class="insight-caption">데이터 기반 해석 초안 · 담당자 검수 필요</span></div>
-        <ul class="channel-insights" id="channelInsights">
-          <!-- populated by JS -->
-        </ul>
-      </div>
     </div>
   </div>
 
@@ -160,6 +163,32 @@
   <div id="siteDetailsContainer">
     <!-- populated by JS -->
   </div>
+
+  </div><!-- /dashboardView -->
+
+  <!-- ═══ View 2: Insights ═══ -->
+  <div id="insightsView" style="display:none">
+
+    <!-- Insight Section 1: Per-site Overview -->
+    <div class="report-section">
+      <div class="section-title" id="insightOverviewTitle">법인별 Overview 인사이트</div>
+      <div class="insight-caption-row">데이터 기반 자동 생성 해석 초안 · 담당자 검수 필요</div>
+      <div class="insight-grid" id="insightOverviewGrid"><!-- populated by JS --></div>
+    </div>
+
+    <!-- Insight Section 2: Pages & Countries -->
+    <div class="report-section">
+      <div class="section-title" id="insightPagesTitle">방문 페이지 · 방문 국가 분석</div>
+      <div class="insight-grid" id="insightPagesGrid"><!-- populated by JS --></div>
+    </div>
+
+    <!-- Insight Section 3: Channels -->
+    <div class="report-section">
+      <div class="section-title" id="insightChannelTitle">채널별 유입 분석</div>
+      <div class="insight-grid" id="insightChannelGrid"><!-- populated by JS --></div>
+    </div>
+
+  </div><!-- /insightsView -->
 
 </main>
 

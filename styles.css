@@ -437,6 +437,88 @@ header {
   background: #E87722;
 }
 
+/* ── View Tabs ── */
+.view-tabs {
+  max-width: 1400px;
+  margin: 0 auto;
+  padding: 24px 40px 0;
+  display: flex;
+  gap: 24px;
+  border-bottom: 1px solid #E5E7EB;
+}
+
+.view-tab {
+  background: none;
+  border: none;
+  font-family: inherit;
+  font-size: 14px;
+  font-weight: 600;
+  color: #6B7280;
+  padding: 0 2px 10px;
+  cursor: pointer;
+  border-bottom: 2px solid transparent;
+  margin-bottom: -1px;
+}
+
+.view-tab:hover {
+  color: #1A1A1A;
+}
+
+.view-tab.active {
+  color: #E87722;
+  border-bottom-color: #E87722;
+}
+
+/* ── Insights View ── */
+.insight-caption-row {
+  font-size: 11px;
+  color: #9CA3AF;
+  margin: -12px 0 16px;
+}
+
+.insight-grid {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 20px;
+}
+
+.insight-card {
+  background: #fff;
+  border: 1px solid #E5E7EB;
+  border-radius: 6px;
+  overflow: hidden;
+}
+
+.insight-card-header {
+  padding: 8px 16px;
+  font-size: 12px;
+  font-weight: 700;
+  color: #fff;
+  letter-spacing: 0.04em;
+}
+
+.insight-list {
+  list-style: none;
+  padding: 6px 16px;
+  margin: 0;
+}
+
+.insight-list li {
+  font-size: 13px;
+  color: #374151;
+  padding: 8px 0;
+  border-bottom: 1px solid #F3F4F6;
+  line-height: 1.55;
+}
+
+.insight-list li:last-child {
+  border-bottom: none;
+}
+
+.insight-list li.warn {
+  color: #B45309;
+}
+
 /* ── Channel Analysis ── */
 .channel-grid {
   display: grid;
@@ -500,11 +582,6 @@ header {
 }
 
 .channel-chart-cell {
-  flex: 1.2;
-  min-width: 0;
-}
-
-.channel-insights-cell {
   flex: 1;
   min-width: 0;
 }
@@ -512,37 +589,6 @@ header {
 .chart-wrap-channel {
   height: 260px;
   position: relative;
-}
-
-.channel-insights {
-  list-style: none;
-  padding: 0;
-  margin: 0;
-}
-
-.channel-insights li {
-  font-size: 13px;
-  color: #374151;
-  padding: 8px 0 8px 2px;
-  border-bottom: 1px solid #F3F4F6;
-  line-height: 1.5;
-}
-
-.channel-insights li:last-child {
-  border-bottom: none;
-}
-
-.channel-insights li.warn {
-  color: #B45309;
-}
-
-.insight-caption {
-  font-weight: 400;
-  text-transform: none;
-  letter-spacing: 0;
-  color: #9CA3AF;
-  font-size: 11px;
-  margin-left: 6px;
 }
 
 /* ── Site Section Wrapper ── */
@@ -814,6 +860,12 @@ footer {
   }
   .channel-bottom-row {
     flex-direction: column;
+  }
+  .insight-grid {
+    grid-template-columns: 1fr;
+  }
+  .view-tabs {
+    padding: 16px 16px 0;
   }
   .site-overview-row {
     grid-template-columns: 1fr 1fr;

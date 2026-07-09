@@ -10,6 +10,7 @@ let tokenClient = null;
 let accessToken = null;
 let selectedYear = null;
 let selectedMonth = null;
+let currentView = 'dashboard'; // 'dashboard' | 'insights'
 
 // cache[siteId] = { summary, yoy, trend, langs, topPages, topCountries }
 const cache = {};
@@ -649,7 +650,6 @@ function renderChannelSection() {
   }
   renderChannelTables();
   renderChannelMixChart();
-  renderChannelInsights();
 }
 
 function renderChannelTables() {
@@ -778,75 +778,241 @@ function renderChannelMixChart() {
   });
 }
 
-// Rule-based insight drafts from channel data (no manual input)
-function buildChannelInsights() {
-  const items = [];
+// ── Insights View ─────────────────────────────────
+// Rule-based insight drafts, one card per site per section.
+// Each builder returns: null (still loading) or an array of {warn, html} bullets.
 
-  CONFIG.SITES.forEach(site => {
-    const d = cache[site.id];
-    if (!d || !d.channels) return;
-    const chans = d.channels;
-    const shortName = site.name.replace('KAON ', '');
+// Section 1: per-site overview insights (summary + YoY + language + trend)
+function buildOverviewInsightBullets(site) {
+  const d = cache[site.id];
+  if (!d || !d.summary) return null;
+  const bullets = [];
 
-    // 1) Biggest MoM mover (only if meaningful volume)
-    let mover = null;
-    sortedChannels(chans).forEach(c => {
-      const m = chans[c];
-      if (Math.max(m.cs, m.ps) < 50 || m.ps === 0) return;
-      const delta = Math.abs(m.cs - m.ps);
-      if (!mover || delta > mover.delta) mover = { ch: c, delta, m };
-    });
-    if (mover && mover.delta / mover.m.ps >= 0.15) {
-      const chg = fmtPct(mover.m.cs, mover.m.ps);
-      items.push({
-        warn: false,
-        html: `<b>${shortName}</b> · ${mover.ch} <span class="chg-${chg.dir}">${chg.text}</span> (${fmtNum(mover.m.ps)} → ${fmtNum(mover.m.cs)}) — 당월 증감 주도 채널`,
-      });
-    }
-
-    // 2) Low-quality Direct warning (volume + low/dropping engagement)
-    const dir = chans['Direct'];
-    if (dir && dir.cs >= 100) {
-      const erC = dir.cs > 0 ? dir.ces / dir.cs : 0;
-      const erP = dir.ps > 0 ? dir.pes / dir.ps : null;
-      const dropped = erP !== null && (erP - erC) >= 0.08;
-      if (erC < 0.15 || (erC < 0.4 && dropped && dir.cs > dir.ps)) {
-        items.push({
-          warn: true,
-          html: `<b>${shortName}</b> · Direct 참여율 ${(erC * 100).toFixed(1)}%${erP !== null ? ` (전월 ${(erP * 100).toFixed(1)}%)` : ''} — 세션 증가 대비 참여율이 낮아 봇/스캐너성 유입 의심`,
-        });
-      }
-    }
-
-    // 3) Newly appearing channels
-    sortedChannels(chans).forEach(c => {
-      const m = chans[c];
-      if (m.ps === 0 && m.cs >= 5) {
-        items.push({
-          warn: false,
-          html: `<b>${shortName}</b> · <b>${c}</b> 채널 신규 유입 (${fmtNum(m.cs)} 세션) — 월간 추적 권장`,
-        });
-      }
-    });
+  const curr = parseTotals(d.summary, 0);
+  const prev = parseTotals(d.summary, 1);
+  const pvChg = fmtPct(curr.pageviews, prev.pageviews);
+  const uvChg = fmtPct(curr.users, prev.users);
+  bullets.push({
+    html: `${selectedMonth}월 PV <b>${fmtNum(curr.pageviews)}</b> (<span class="chg-${pvChg.dir}">${pvChg.text}</span>) · UV <b>${fmtNum(curr.users)}</b> (<span class="chg-${uvChg.dir}">${uvChg.text}</span>) vs 전월`,
   });
 
-  return items;
-}
-
-function renderChannelInsights() {
-  const ul = document.getElementById('channelInsights');
-  if (!ul) return;
-
-  const anyLoaded = CONFIG.SITES.some(s => cache[s.id] && cache[s.id].channels);
-  if (!anyLoaded) {
-    ul.innerHTML = '<li style="color:#9CA3AF">로딩 중...</li>';
-    return;
+  if (d.yoy) {
+    const yc = parseTotals(d.yoy, 0);
+    const yp = parseTotals(d.yoy, 1);
+    const ypv = fmtPct(yc.pageviews, yp.pageviews);
+    const yuv = fmtPct(yc.users, yp.users);
+    bullets.push({
+      html: `전년 동월 대비 PV <span class="chg-${ypv.dir}">${ypv.text}</span> · UV <span class="chg-${yuv.dir}">${yuv.text}</span>`,
+    });
   }
 
-  const items = buildChannelInsights();
-  ul.innerHTML = items.length === 0
-    ? '<li style="color:#9CA3AF">특이 사항 없음</li>'
-    : items.map(it => `<li class="${it.warn ? 'warn' : ''}">${it.warn ? '⚠️ ' : ''}${it.html}</li>`).join('');
+  // PV/UV divergence
+  if (prev.pageviews > 0 && prev.users > 0) {
+    const pvD = (curr.pageviews - prev.pageviews) / prev.pageviews;
+    const uvD = (curr.users - prev.users) / prev.users;
+    if (pvD < -0.05 && uvD > 0.05) {
+      bullets.push({ warn: true, html: `방문자는 늘었지만 PV는 감소 — 방문 깊이 축소(얕은 신규 유입 가능성), 유입 성격 점검 권장` });
+    } else if (pvD > 0.05 && uvD < -0.05) {
+      bullets.push({ html: `방문자 감소에도 PV 증가 — 방문자당 열람 페이지 수 증가` });
+    }
+  }
+
+  // Biggest language mover
+  if (d.langs) {
+    let best = null;
+    site.languages.filter(l => l.code !== 'all').forEach(l => {
+      const r = d.langs[l.code];
+      if (!r) return;
+      const c = parseTotals(r, 0);
+      const p = parseTotals(r, 1);
+      const delta = c.pageviews - p.pageviews;
+      if (!best || Math.abs(delta) > Math.abs(best.delta)) best = { label: l.label, delta, c, p };
+    });
+    if (best && Math.abs(best.delta) >= 50 && best.p.pageviews > 0) {
+      const chg = fmtPct(best.c.pageviews, best.p.pageviews);
+      bullets.push({
+        html: `언어별 증감 주도: <b>${best.label}</b> PV ${fmtNum(best.p.pageviews)} → ${fmtNum(best.c.pageviews)} (<span class="chg-${chg.dir}">${chg.text}</span>)`,
+      });
+    }
+  }
+
+  // Current month vs YTD monthly average
+  if (d.trend) {
+    const t = parseTrend(d.trend);
+    const currKey = `${selectedYear}${String(selectedMonth).padStart(2, '0')}`;
+    const cur = t.find(x => x.month === currKey);
+    const others = t.filter(x => x.month !== currKey);
+    if (cur && others.length > 0) {
+      const avg = others.reduce((s, x) => s + x.pageviews, 0) / others.length;
+      if (avg > 0) {
+        const diff = (cur.pageviews - avg) / avg;
+        if (Math.abs(diff) >= 0.15) {
+          bullets.push({
+            html: `${selectedYear}년 월평균 PV(${fmtNum(avg)}) 대비 <span class="chg-${diff > 0 ? 'up' : 'down'}">${diff > 0 ? '▲' : '▼'} ${(Math.abs(diff) * 100).toFixed(1)}%</span> ${diff > 0 ? '상회' : '하회'}`,
+          });
+        }
+      }
+    }
+  }
+
+  return bullets;
+}
+
+// Section 2: top pages & countries insights
+function buildPagesInsightBullets(site) {
+  const d = cache[site.id];
+  if (!d || (!d.topPages && !d.topCountries)) return null;
+  const bullets = [];
+
+  if (d.topPages) {
+    const pages = parseTopPages(d.topPages);
+    const prevMap = buildPrevPagesMap(d.prevTopPages);
+    const langLabel = getLangLabel(site, site.topPagesLang);
+
+    if (pages.length > 0) {
+      const p1 = pages[0];
+      bullets.push({
+        html: `최다 방문(${langLabel}): <b>${p1.path}</b> — ${fmtNum(p1.views)} PV, 상위 페이지의 ${p1.share.toFixed(1)}%`,
+      });
+      if (p1.share >= 40) {
+        bullets.push({ html: `상위 트래픽이 한 페이지에 집중(${p1.share.toFixed(1)}%) — 해당 페이지 최적화 효과가 큼` });
+      }
+
+      let riser = null, faller = null;
+      pages.forEach(p => {
+        const pv = prevMap[p.path];
+        if (!pv || pv < 30) return;
+        const r = (p.views - pv) / pv;
+        if (r >= 0.3 && (!riser || r > riser.r)) riser = { p, pv, r };
+        if (r <= -0.3 && (!faller || r < faller.r)) faller = { p, pv, r };
+      });
+      if (riser) bullets.push({ html: `급상승: <b>${riser.p.path}</b> ${fmtNum(riser.pv)} → ${fmtNum(riser.p.views)} (<span class="chg-up">▲ ${(riser.r * 100).toFixed(1)}%</span>)` });
+      if (faller) bullets.push({ html: `하락: <b>${faller.p.path}</b> ${fmtNum(faller.pv)} → ${fmtNum(faller.p.views)} (<span class="chg-down">▼ ${(Math.abs(faller.r) * 100).toFixed(1)}%</span>)` });
+    }
+  }
+
+  if (site.showCountries && d.topCountries) {
+    const cs = parseTopCountries(d.topCountries);
+    if (cs.length > 0) {
+      bullets.push({ html: `방문 1위 국가(English): <b>${cs[0].country}</b> — UV ${fmtNum(cs[0].users)} (${cs[0].share.toFixed(1)}%)` });
+
+      let surge = null;
+      cs.forEach(c => {
+        if (c.prevUsers === null || c.prevUsers < 20 || c.users < 30) return;
+        const r = (c.users - c.prevUsers) / c.prevUsers;
+        if (r >= 0.5 && (!surge || r > surge.r)) surge = { c, r };
+      });
+      if (surge) {
+        bullets.push({
+          warn: surge.r >= 1,
+          html: `<b>${surge.c.country}</b> UV ${fmtNum(surge.c.prevUsers)} → ${fmtNum(surge.c.users)} (<span class="chg-up">▲ ${(surge.r * 100).toFixed(0)}%</span>) 급증${surge.r >= 1 ? ' — 유입 성격(실수요/봇) 확인 권장' : ''}`,
+        });
+      }
+
+      const newc = cs.find(c => !c.prevUsers);
+      if (newc) bullets.push({ html: `Top 10 신규 진입 국가: <b>${newc.country}</b> (UV ${fmtNum(newc.users)})` });
+    }
+  }
+
+  return bullets;
+}
+
+// Section 3: channel insights
+function buildChannelInsightBullets(site) {
+  const d = cache[site.id];
+  if (!d || !d.channels) return null;
+  const chans = d.channels;
+  const bullets = [];
+
+  // 1) Biggest MoM mover (only if meaningful volume)
+  let mover = null;
+  sortedChannels(chans).forEach(c => {
+    const m = chans[c];
+    if (Math.max(m.cs, m.ps) < 50 || m.ps === 0) return;
+    const delta = Math.abs(m.cs - m.ps);
+    if (!mover || delta > mover.delta) mover = { ch: c, delta, m };
+  });
+  if (mover && mover.delta / mover.m.ps >= 0.15) {
+    const chg = fmtPct(mover.m.cs, mover.m.ps);
+    bullets.push({
+      html: `당월 증감 주도 채널: <b>${mover.ch}</b> <span class="chg-${chg.dir}">${chg.text}</span> (${fmtNum(mover.m.ps)} → ${fmtNum(mover.m.cs)})`,
+    });
+  }
+
+  // 2) Low-quality Direct warning (volume + low/dropping engagement)
+  const dir = chans['Direct'];
+  if (dir && dir.cs >= 100) {
+    const erC = dir.cs > 0 ? dir.ces / dir.cs : 0;
+    const erP = dir.ps > 0 ? dir.pes / dir.ps : null;
+    const dropped = erP !== null && (erP - erC) >= 0.08;
+    if (erC < 0.15 || (erC < 0.4 && dropped && dir.cs > dir.ps)) {
+      bullets.push({
+        warn: true,
+        html: `Direct 참여율 ${(erC * 100).toFixed(1)}%${erP !== null ? ` (전월 ${(erP * 100).toFixed(1)}%)` : ''} — 세션 증가 대비 참여율이 낮아 봇/스캐너성 유입 의심`,
+      });
+    }
+  }
+
+  // 3) Newly appearing channels
+  sortedChannels(chans).forEach(c => {
+    const m = chans[c];
+    if (m.ps === 0 && m.cs >= 5) {
+      bullets.push({ html: `<b>${c}</b> 채널 신규 유입 (${fmtNum(m.cs)} 세션) — 월간 추적 권장` });
+    }
+  });
+
+  return bullets;
+}
+
+function renderInsightGrid(elId, builder) {
+  const grid = document.getElementById(elId);
+  if (!grid) return;
+  grid.innerHTML = '';
+
+  CONFIG.SITES.forEach(site => {
+    const bullets = builder(site);
+    const card = document.createElement('div');
+    card.className = 'insight-card';
+    const header = `<div class="insight-card-header" style="background:${site.color}">${site.name}</div>`;
+    if (bullets === null) {
+      card.innerHTML = `${header}
+        <div class="loading-state" style="padding:16px 0"><div class="loading-spinner"></div><br>로딩 중...</div>`;
+    } else {
+      card.innerHTML = `${header}
+        <ul class="insight-list">${bullets.length > 0
+          ? bullets.map(b => `<li class="${b.warn ? 'warn' : ''}">${b.warn ? '⚠️ ' : ''}${b.html}</li>`).join('')
+          : '<li style="color:#9CA3AF">특이 사항 없음</li>'}</ul>`;
+    }
+    grid.appendChild(card);
+  });
+}
+
+function renderInsightsView() {
+  if (selectedYear) {
+    const mLabel = fmtMonthLabel(selectedYear, selectedMonth);
+    const t1 = document.getElementById('insightOverviewTitle');
+    const t2 = document.getElementById('insightPagesTitle');
+    const t3 = document.getElementById('insightChannelTitle');
+    if (t1) t1.textContent = `법인별 Overview 인사이트: ${mLabel}`;
+    if (t2) t2.textContent = `방문 페이지 · 방문 국가 분석: ${mLabel}`;
+    if (t3) t3.textContent = `채널별 유입 분석: ${mLabel}`;
+  }
+  renderInsightGrid('insightOverviewGrid', buildOverviewInsightBullets);
+  renderInsightGrid('insightPagesGrid', buildPagesInsightBullets);
+  renderInsightGrid('insightChannelGrid', buildChannelInsightBullets);
+}
+
+// ── View Switching ────────────────────────────────
+
+function switchView(view) {
+  currentView = view;
+  const dv = document.getElementById('dashboardView');
+  const iv = document.getElementById('insightsView');
+  if (dv) dv.style.display = view === 'dashboard' ? 'block' : 'none';
+  if (iv) iv.style.display = view === 'insights' ? 'block' : 'none';
+  document.querySelectorAll('.view-tab').forEach(b =>
+    b.classList.toggle('active', b.dataset.view === view));
+  window.scrollTo({ top: 0 });
 }
 
 // ── Rendering: Site Section ───────────────────────
@@ -1238,8 +1404,9 @@ async function loadAllSites() {
     `<tr><td style="font-weight:600">${s.name}</td><td colspan="6" style="color:#9CA3AF">로딩 중...</td></tr>`
   ).join('');
 
-  // Reset channel section (renders loading placeholders since cache is empty)
+  // Reset channel section + insights view (loading placeholders since cache is empty)
   renderChannelSection();
+  renderInsightsView();
 
   // Load all 4 sites in parallel
   await Promise.all(CONFIG.SITES.map(site => loadOneSite(site)));
@@ -1288,9 +1455,10 @@ async function loadOneSite(site) {
     // Render this site's section
     renderSiteSection(site);
 
-    // Update overview + channel analysis with latest data
+    // Update overview + channel analysis + insights with latest data
     renderOverview();
     renderChannelSection();
+    renderInsightsView();
 
   } catch (err) {
     console.error(`[${site.name}] fatal:`, err.message);
@@ -1428,6 +1596,8 @@ async function generateReport() {
   setReportProgress('데이터 준비 중…');
 
   try {
+    // 캡처 대상은 대시보드 뷰의 요소이므로, 인사이트 탭이 열려 있으면 전환
+    if (currentView !== 'dashboard') switchView('dashboard');
     // 데이터가 아직 없으면 로드
     const anyLoaded = CONFIG.SITES.some(s => cache[s.id] && cache[s.id].summary);
     if (!anyLoaded) {
@@ -1650,6 +1820,10 @@ document.addEventListener('DOMContentLoaded', () => {
   });
 
   document.getElementById('reportBtn').addEventListener('click', generateReport);
+
+  document.querySelectorAll('.view-tab').forEach(btn => {
+    btn.addEventListener('click', () => switchView(btn.dataset.view));
+  });
 
   document.getElementById('monthPicker').addEventListener('change', () => {
     applyMonthPicker();
