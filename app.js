@@ -288,6 +288,45 @@ async function fetchLangs(site) {
   return results;
 }
 
+// Channel breakdown (session default channel group) for current + previous month.
+// Multi-property sites: fetch each language property and sum per channel.
+async function fetchChannels(site) {
+  const { startDate: cs, endDate: ce } = getMonthRange(selectedYear, selectedMonth);
+  const prev = getPrevMonth(selectedYear, selectedMonth);
+  const { startDate: ps, endDate: pe } = getMonthRange(prev.y, prev.m);
+  const dateRanges = [{ startDate: cs, endDate: ce }, { startDate: ps, endDate: pe }];
+  const propIds = getSitePropertyList(site);
+
+  const reports = await Promise.all(propIds.map(pid =>
+    runReport(pid, {
+      dateRanges,
+      metrics: ['sessions', 'totalUsers', 'engagedSessions'],
+      dimensions: ['sessionDefaultChannelGroup'],
+    }).catch(e => { console.warn(`[${site.name}] channels(${pid}):`, e.message); return null; })
+  ));
+
+  // merged[channel] = { cs, cu, ces, ps, pu, pes } (c=current, p=previous)
+  const merged = {};
+  for (const r of reports) {
+    if (!r) continue;
+    const dimHeaders = r.dimensionHeaders || [];
+    const drIdx = dimHeaders.findIndex(h => h.name === 'dateRange');
+    const chIdx = dimHeaders.findIndex(h => h.name === 'sessionDefaultChannelGroup');
+    for (const row of (r.rows || [])) {
+      const ch = row.dimensionValues[chIdx >= 0 ? chIdx : 0].value;
+      const range = drIdx >= 0 ? row.dimensionValues[drIdx].value : 'date_range_0';
+      if (!merged[ch]) merged[ch] = { cs: 0, cu: 0, ces: 0, ps: 0, pu: 0, pes: 0 };
+      const m = merged[ch];
+      const s = Number(row.metricValues[0]?.value || 0);
+      const u = Number(row.metricValues[1]?.value || 0);
+      const es = Number(row.metricValues[2]?.value || 0);
+      if (range === 'date_range_1') { m.ps += s; m.pu += u; m.pes += es; }
+      else { m.cs += s; m.cu += u; m.ces += es; }
+    }
+  }
+  return merged;
+}
+
 // Top pages for selected month, filtered by topPagesLang
 async function fetchTopPages(site) {
   const { startDate, endDate } = getMonthRange(selectedYear, selectedMonth);
@@ -575,6 +614,239 @@ function renderYoYChart() {
       },
     },
   });
+}
+
+// ── Rendering: Channel Analysis ───────────────────
+
+const CHANNEL_COLORS = {
+  'Organic Search': '#2563EB',
+  'Direct': '#E87722',
+  'Referral': '#16A34A',
+  'Organic Social': '#9333EA',
+  'Paid Search': '#DC2626',
+  'Paid Social': '#DB2777',
+  'Email': '#D97706',
+  'Organic Video': '#0D9488',
+  'AI Assistant': '#0891B2',
+  'Display': '#7C3AED',
+  'Unassigned': '#9CA3AF',
+};
+const CHANNEL_FALLBACK_COLOR = '#6B7280';
+
+function channelColor(ch) {
+  return CHANNEL_COLORS[ch] || CHANNEL_FALLBACK_COLOR;
+}
+
+// Sorted channel list for a site (by current sessions desc)
+function sortedChannels(channels) {
+  return Object.keys(channels).sort((a, b) => channels[b].cs - channels[a].cs);
+}
+
+function renderChannelSection() {
+  const title = document.getElementById('channelTitle');
+  if (title && selectedYear) {
+    title.textContent = `채널별 유입 분석 (세션 기준): ${fmtMonthLabel(selectedYear, selectedMonth)}`;
+  }
+  renderChannelTables();
+  renderChannelMixChart();
+  renderChannelInsights();
+}
+
+function renderChannelTables() {
+  const grid = document.getElementById('channelGrid');
+  if (!grid) return;
+  grid.innerHTML = '';
+
+  CONFIG.SITES.forEach(site => {
+    const d = cache[site.id];
+    const card = document.createElement('div');
+    card.className = 'channel-table-card';
+
+    if (!d || !d.channels) {
+      card.innerHTML = `
+        <div class="channel-card-header" style="background:${site.color}">${site.name}</div>
+        <div class="loading-state" style="padding:20px 0">
+          <div class="loading-spinner"></div><br>로딩 중...
+        </div>`;
+      grid.appendChild(card);
+      return;
+    }
+
+    const chs = sortedChannels(d.channels);
+    const totalCurr = chs.reduce((s, c) => s + d.channels[c].cs, 0);
+    const totalPrev = chs.reduce((s, c) => s + d.channels[c].ps, 0);
+    const totalChg = fmtPct(totalCurr, totalPrev);
+
+    // Top 5 channels + merge the rest into "기타"
+    const top = chs.slice(0, 5);
+    const rest = chs.slice(5);
+    const restAgg = rest.reduce((acc, c) => {
+      const m = d.channels[c];
+      acc.cs += m.cs; acc.ces += m.ces; acc.ps += m.ps;
+      return acc;
+    }, { cs: 0, ces: 0, ps: 0 });
+
+    const rowHTML = (label, cs, ps, ces, idx, dotColor) => {
+      const chg = fmtPct(cs, ps);
+      const share = totalCurr > 0 ? (cs / totalCurr * 100).toFixed(1) : '0.0';
+      const er = cs > 0 ? (ces / cs * 100).toFixed(1) + '%' : '–';
+      return `<tr style="background:${idx % 2 === 1 ? site.altRowColor : ''}">
+        <td><span class="channel-dot" style="background:${dotColor}"></span>${label}</td>
+        <td>${fmtNum(ps)}</td>
+        <td>${fmtNum(cs)}</td>
+        <td class="chg-${chg.dir}">${chg.text}</td>
+        <td>${share}%</td>
+        <td>${er}</td>
+      </tr>`;
+    };
+
+    const bodyRows = top.map((c, i) => {
+      const m = d.channels[c];
+      return rowHTML(c, m.cs, m.ps, m.ces, i, channelColor(c));
+    }).join('') + (rest.length > 0
+      ? rowHTML('기타', restAgg.cs, restAgg.ps, restAgg.ces, top.length, CHANNEL_FALLBACK_COLOR)
+      : '');
+
+    card.innerHTML = `
+      <div class="channel-card-header" style="background:${site.color}">
+        ${site.name}
+        <span class="channel-card-total">총 ${fmtNum(totalCurr)} 세션
+          <span class="chg-${totalChg.dir}" style="margin-left:4px">${totalChg.text}</span>
+        </span>
+      </div>
+      <table class="report-table">
+        <thead style="background:${site.tableColor}">
+          <tr><th>채널</th><th>전월</th><th>당월</th><th>증감률</th><th>비중</th><th>참여율</th></tr>
+        </thead>
+        <tbody>${bodyRows || '<tr><td colspan="6" style="color:#9CA3AF;text-align:center">데이터 없음</td></tr>'}</tbody>
+      </table>`;
+    grid.appendChild(card);
+  });
+}
+
+function renderChannelMixChart() {
+  const canvas = document.getElementById('channelMixChart');
+  if (!canvas) return;
+  charts['channelMixChart']?.destroy();
+
+  const loaded = CONFIG.SITES.filter(s => cache[s.id] && cache[s.id].channels);
+  if (loaded.length === 0) return;
+
+  // Union of channels across sites, ordered by total current sessions
+  const chTotals = {};
+  loaded.forEach(site => {
+    const chans = cache[site.id].channels;
+    Object.keys(chans).forEach(c => { chTotals[c] = (chTotals[c] || 0) + chans[c].cs; });
+  });
+  const chOrder = Object.keys(chTotals).sort((a, b) => chTotals[b] - chTotals[a]);
+
+  const labels = CONFIG.SITES.map(s => s.name.replace('KAON ', ''));
+  const datasets = chOrder.map(ch => ({
+    label: ch,
+    data: CONFIG.SITES.map(site => {
+      const d = cache[site.id];
+      if (!d || !d.channels) return 0;
+      const total = Object.values(d.channels).reduce((s, m) => s + m.cs, 0);
+      const v = d.channels[ch] ? d.channels[ch].cs : 0;
+      return total > 0 ? +(v / total * 100).toFixed(1) : 0;
+    }),
+    backgroundColor: channelColor(ch) + 'CC',
+    borderColor: '#fff',
+    borderWidth: 1,
+  }));
+
+  charts['channelMixChart'] = new Chart(canvas, {
+    type: 'bar',
+    data: { labels, datasets },
+    options: {
+      indexAxis: 'y',
+      responsive: true,
+      maintainAspectRatio: false,
+      plugins: {
+        legend: { position: 'bottom', labels: { boxWidth: 10, font: { size: 10 }, padding: 6 } },
+        tooltip: { callbacks: { label: ctx => ` ${ctx.dataset.label}: ${ctx.raw}%` } },
+      },
+      scales: {
+        x: {
+          stacked: true, max: 100,
+          grid: { color: '#F3F4F6' },
+          ticks: { font: { size: 10 }, callback: v => v + '%' },
+        },
+        y: { stacked: true, grid: { display: false }, ticks: { font: { size: 11 } } },
+      },
+    },
+  });
+}
+
+// Rule-based insight drafts from channel data (no manual input)
+function buildChannelInsights() {
+  const items = [];
+
+  CONFIG.SITES.forEach(site => {
+    const d = cache[site.id];
+    if (!d || !d.channels) return;
+    const chans = d.channels;
+    const shortName = site.name.replace('KAON ', '');
+
+    // 1) Biggest MoM mover (only if meaningful volume)
+    let mover = null;
+    sortedChannels(chans).forEach(c => {
+      const m = chans[c];
+      if (Math.max(m.cs, m.ps) < 50 || m.ps === 0) return;
+      const delta = Math.abs(m.cs - m.ps);
+      if (!mover || delta > mover.delta) mover = { ch: c, delta, m };
+    });
+    if (mover && mover.delta / mover.m.ps >= 0.15) {
+      const chg = fmtPct(mover.m.cs, mover.m.ps);
+      items.push({
+        warn: false,
+        html: `<b>${shortName}</b> · ${mover.ch} <span class="chg-${chg.dir}">${chg.text}</span> (${fmtNum(mover.m.ps)} → ${fmtNum(mover.m.cs)}) — 당월 증감 주도 채널`,
+      });
+    }
+
+    // 2) Low-quality Direct warning (volume + low/dropping engagement)
+    const dir = chans['Direct'];
+    if (dir && dir.cs >= 100) {
+      const erC = dir.cs > 0 ? dir.ces / dir.cs : 0;
+      const erP = dir.ps > 0 ? dir.pes / dir.ps : null;
+      const dropped = erP !== null && (erP - erC) >= 0.08;
+      if (erC < 0.15 || (erC < 0.4 && dropped && dir.cs > dir.ps)) {
+        items.push({
+          warn: true,
+          html: `<b>${shortName}</b> · Direct 참여율 ${(erC * 100).toFixed(1)}%${erP !== null ? ` (전월 ${(erP * 100).toFixed(1)}%)` : ''} — 세션 증가 대비 참여율이 낮아 봇/스캐너성 유입 의심`,
+        });
+      }
+    }
+
+    // 3) Newly appearing channels
+    sortedChannels(chans).forEach(c => {
+      const m = chans[c];
+      if (m.ps === 0 && m.cs >= 5) {
+        items.push({
+          warn: false,
+          html: `<b>${shortName}</b> · <b>${c}</b> 채널 신규 유입 (${fmtNum(m.cs)} 세션) — 월간 추적 권장`,
+        });
+      }
+    });
+  });
+
+  return items;
+}
+
+function renderChannelInsights() {
+  const ul = document.getElementById('channelInsights');
+  if (!ul) return;
+
+  const anyLoaded = CONFIG.SITES.some(s => cache[s.id] && cache[s.id].channels);
+  if (!anyLoaded) {
+    ul.innerHTML = '<li style="color:#9CA3AF">로딩 중...</li>';
+    return;
+  }
+
+  const items = buildChannelInsights();
+  ul.innerHTML = items.length === 0
+    ? '<li style="color:#9CA3AF">특이 사항 없음</li>'
+    : items.map(it => `<li class="${it.warn ? 'warn' : ''}">${it.warn ? '⚠️ ' : ''}${it.html}</li>`).join('');
 }
 
 // ── Rendering: Site Section ───────────────────────
@@ -966,6 +1238,9 @@ async function loadAllSites() {
     `<tr><td style="font-weight:600">${s.name}</td><td colspan="6" style="color:#9CA3AF">로딩 중...</td></tr>`
   ).join('');
 
+  // Reset channel section (renders loading placeholders since cache is empty)
+  renderChannelSection();
+
   // Load all 4 sites in parallel
   await Promise.all(CONFIG.SITES.map(site => loadOneSite(site)));
 }
@@ -975,18 +1250,20 @@ async function loadOneSite(site) {
 
   try {
     // Kick off all fetches in parallel
-    const [summaryRes, yoyRes, trendRes, langsRes, topPagesRes] = await Promise.all([
+    const [summaryRes, yoyRes, trendRes, langsRes, topPagesRes, channelsRes] = await Promise.all([
       fetchSummary(site).catch(e => { console.error(`[${site.name}] summary:`, e.message); return null; }),
       fetchYoY(site).catch(e => { console.error(`[${site.name}] yoy:`, e.message); return null; }),
       fetchTrend(site).catch(e => { console.error(`[${site.name}] trend:`, e.message); return null; }),
       fetchLangs(site).catch(e => { console.error(`[${site.name}] langs:`, e.message); return null; }),
       fetchTopPages(site).catch(e => { console.error(`[${site.name}] topPages:`, e.message); return null; }),
+      fetchChannels(site).catch(e => { console.error(`[${site.name}] channels:`, e.message); return null; }),
     ]);
 
     cache[site.id].summary = summaryRes;
     cache[site.id].yoy = yoyRes;
     cache[site.id].trend = trendRes;
     cache[site.id].langs = langsRes || {};
+    cache[site.id].channels = channelsRes;
 
     // Now fetch prev top pages using paths from top pages result
     let prevTopPagesRes = null;
@@ -1011,8 +1288,9 @@ async function loadOneSite(site) {
     // Render this site's section
     renderSiteSection(site);
 
-    // Update overview with latest data
+    // Update overview + channel analysis with latest data
     renderOverview();
+    renderChannelSection();
 
   } catch (err) {
     console.error(`[${site.name}] fatal:`, err.message);
@@ -1193,6 +1471,7 @@ async function generateReport() {
       const c = await captureElement(overviewEl);
       addCanvasPage(pdf, c, first); first = false;
     }
+    // 참고: 채널별 유입 분석(#channelSection)은 화면 전용 — PDF 보고서에는 포함하지 않음
 
     // ── 3) 사이트별 상세 (사이트당 2페이지) ──
     const sites = CONFIG.SITES;

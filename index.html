@@ -131,6 +131,31 @@
     </div>
   </div>
 
+  <!-- Section 1.5: Channel Analysis -->
+  <div class="report-section" id="channelSection">
+    <div class="section-title" id="channelTitle">채널별 유입 분석</div>
+
+    <!-- 4 per-site channel tables -->
+    <div class="channel-grid" id="channelGrid">
+      <!-- populated by JS -->
+    </div>
+
+    <div class="channel-bottom-row">
+      <div class="channel-chart-cell">
+        <div class="subsection-title">사이트별 채널 구성 (당월 세션 비중)</div>
+        <div class="chart-wrap-channel">
+          <canvas id="channelMixChart"></canvas>
+        </div>
+      </div>
+      <div class="channel-insights-cell">
+        <div class="subsection-title">자동 인사이트 <span class="insight-caption">데이터 기반 해석 초안 · 담당자 검수 필요</span></div>
+        <ul class="channel-insights" id="channelInsights">
+          <!-- populated by JS -->
+        </ul>
+      </div>
+    </div>
+  </div>
+
   <!-- Section 2-5: Per-site detail sections -->
   <div id="siteDetailsContainer">
     <!-- populated by JS -->
